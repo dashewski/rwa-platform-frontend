@@ -57,6 +57,7 @@ interface MarketplaceFiltersProps {
 }
 
 export const POOL_STAGES = [
+  { value: 'upcoming',     label: 'Upcoming'      },
   { value: 'collecting',    label: 'Collecting'    },
   { value: 'paying_debt',   label: 'Paying debt'   },
   { value: 'paying_profit', label: 'Paying profit' },

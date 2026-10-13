@@ -11,6 +11,7 @@ import { NewsList } from '@/components/news';
 import { GET_POOL_BY_ID, GET_RAW_PRICE_DATA } from '@/lib/pool/operations';
 import { getCollectedHold } from '@/lib/pool/collected';
 import { getPoolStatus, getPoolTradeState } from '@/lib/pool/status';
+import { getPoolPrice } from '@/lib/pool/display';
 import { GET_BUSINESS_WITH_RISK } from '@/lib/business/operations';
 import { GET_COMPANY } from '@/lib/company/operations';
 import { Button, Icon, Title } from '@/components/ui';
@@ -50,24 +51,6 @@ function getProgressPercent(pool: AnyPool): number {
   } catch {
     return 0;
   }
-}
-
-function getPoolPrice(pool: AnyPool): string {
-  try {
-    if (pool.virtualHoldReserve && pool.virtualRwaReserve) {
-      const hold = Number(BigInt(pool.virtualHoldReserve) / BigInt(10) ** BigInt(15)) / 1000;
-      const rwa = Number(BigInt(pool.virtualRwaReserve) / BigInt(10) ** BigInt(15)) / 1000;
-      if (rwa > 0) return (hold / rwa).toFixed(2);
-    }
-    if (pool.expectedHoldAmount && pool.expectedRwaAmount) {
-      const hold = Number(BigInt(pool.expectedHoldAmount) / BigInt(10) ** BigInt(15)) / 1000;
-      const rwa = Number(BigInt(pool.expectedRwaAmount) / BigInt(10) ** BigInt(15)) / 1000;
-      if (rwa > 0) return (hold / rwa).toFixed(2);
-    }
-  } catch {
-    /* fall through */
-  }
-  return '1.00';
 }
 
 function getTrancheDay(expiredAt: number, entryPeriodExpired: number): string {
@@ -222,7 +205,8 @@ const PoolPage: FC = () => {
   const priceDiffPct = price24hAgo ? (priceDiff / price24hAgo) * 100 : 0;
   const priceUp = priceDiff >= 0;
 
-  const livePrice = currentPrice ? currentPrice.toFixed(4) : getPoolPrice(pool);
+  const reservePrice = getPoolPrice(pool);
+  const livePrice = currentPrice ? currentPrice.toFixed(4) : reservePrice === '—' ? '0.0000' : reservePrice;
 
   const [priceInt, priceDec] = livePrice.split('.');
   const progress = pool ? getProgressPercent(pool) : 0;

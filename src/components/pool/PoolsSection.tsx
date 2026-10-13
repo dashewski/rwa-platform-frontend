@@ -9,6 +9,7 @@ import { Button, ButtonBorderDash, Card, Title } from '@/components/ui';
 import { GET_POOLS } from '@/lib/pool/operations';
 import { getCollectedHold } from '@/lib/pool/collected';
 import { getPoolStatus } from '@/lib/pool/status';
+import { getPoolPrice } from '@/lib/pool/display';
 import { formatTicker } from '@/lib/formatTicker';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -51,24 +52,6 @@ function getProgressPercent(pool: Pool): number {
   } catch {
     return 0;
   }
-}
-
-function getPoolPrice(pool: Pool): string {
-  try {
-    if (pool.virtualHoldReserve && pool.virtualRwaReserve) {
-      const hold = Number(BigInt(pool.virtualHoldReserve) / BigInt(10) ** BigInt(15)) / 1000;
-      const rwa = Number(BigInt(pool.virtualRwaReserve) / BigInt(10) ** BigInt(15)) / 1000;
-      if (rwa > 0) return (hold / rwa).toFixed(2);
-    }
-    if (pool.expectedHoldAmount && pool.expectedRwaAmount) {
-      const hold = Number(BigInt(pool.expectedHoldAmount) / BigInt(10) ** BigInt(15)) / 1000;
-      const rwa = Number(BigInt(pool.expectedRwaAmount) / BigInt(10) ** BigInt(15)) / 1000;
-      if (rwa > 0) return (hold / rwa).toFixed(2);
-    }
-  } catch {
-    // fall through
-  }
-  return '—';
 }
 
 const CHAIN_NAMES: Record<string, string> = {
