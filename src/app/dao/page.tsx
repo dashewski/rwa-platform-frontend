@@ -17,6 +17,7 @@ import {
   GOVERNANCE_ADDRESS, CONFIG_ADDRESS, DAO_STAKING_ADDRESS, TREASURY_ADDRESS, PLT_TOKEN_ADDRESS,
   ERC20_APPROVE_ABI,
 } from '@/lib/contracts';
+import { useAuth } from '@/lib/auth/AuthContext';
 import type { Proposal as GqlProposal, Vote as GqlVote } from '@/gql/graphql';
 
 type ProposalStatus = 'pending' | 'succeeded' | 'rejected';
@@ -527,6 +528,10 @@ const VotingPowerWidget: FC = () => {
   const { openConnectModal } = useConnectModal();
   const { writeContractAsync } = useWriteContract();
   const publicClient = usePublicClient();
+  // The wallet can stay connected after the app session expires, so on-chain actions
+  // also require a signed-in session — otherwise a signed-out user could still stake.
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const signedOut = !authLoading && !isAuthenticated;
 
   const { data: pltBalance, refetch: refetchPlt } = useReadContract({
     address: PLT_TOKEN_ADDRESS,
@@ -561,6 +566,8 @@ const VotingPowerWidget: FC = () => {
 
   const handleAction = async () => {
     if (!address) { openConnectModal?.(); return; }
+    if (authLoading) return;
+    if (!isAuthenticated) { toast('Sign in to stake', 'warning'); return; }
     if (!amount || isSubmitting) return;
     setIsSubmitting(true);
     try {
@@ -642,7 +649,7 @@ const VotingPowerWidget: FC = () => {
         <button
           onClick={handleAction}
           disabled={isSubmitting}
-          className={'w-full flex items-center justify-center bg-grey-dark text-white text-sm font-medium py-3 rounded-xl cursor-pointer hover:opacity-80 tr-d disabled:opacity-50'}
+          className={clsx('w-full flex items-center justify-center bg-grey-dark text-white text-sm font-medium py-3 rounded-xl cursor-pointer hover:opacity-80 tr-d disabled:opacity-50', address && signedOut && 'opacity-50')}
         >
           {isSubmitting ? 'Processing…' : (address ? (stakeTab === 'stake' ? 'Stake' : 'Unstake') : 'Connect wallet')}
         </button>
@@ -661,6 +668,8 @@ const ProposalCard: FC<{ proposal: Proposal }> = ({ proposal }) => {
   const { writeContractAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const apolloClient = useApolloClient();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const signedOut = !authLoading && !isAuthenticated;
 
   // skip for ended proposals — receipt doesn't change and saves an RPC call per card
   const { data: receipt, refetch: refetchReceipt } = useReadContract({
@@ -677,6 +686,8 @@ const ProposalCard: FC<{ proposal: Proposal }> = ({ proposal }) => {
 
   const handleVote = async (side: 'for' | 'against') => {
     if (isEnded || hasVoted || !address || isSubmitting || !proposal.proposalId) return;
+    if (authLoading) return;
+    if (!isAuthenticated) { toast('Sign in to vote', 'warning'); return; }
     setIsSubmitting(true);
     try {
       const tx = await writeContractAsync({
@@ -740,6 +751,7 @@ const ProposalCard: FC<{ proposal: Proposal }> = ({ proposal }) => {
                 disabled={isSubmitting || hasVoted}
                 className={clsx(
                   'flex-1 flex items-center justify-center border rounded-lg py-3 text-sm cursor-pointer tr-d disabled:opacity-50',
+                  signedOut && 'opacity-50',
                   userVote === 'for'
                     ? 'border-[#5c9557] bg-[#5c9557]/10'
                     : 'border-stroke-primary hover:bg-bg-primary'
@@ -752,6 +764,7 @@ const ProposalCard: FC<{ proposal: Proposal }> = ({ proposal }) => {
                 disabled={isSubmitting || hasVoted}
                 className={clsx(
                   'flex-1 flex items-center justify-center border rounded-lg py-3 text-sm cursor-pointer tr-d disabled:opacity-50',
+                  signedOut && 'opacity-50',
                   userVote === 'against'
                     ? 'border-[#a22c14] bg-[#a22c14]/10'
                     : 'border-stroke-primary hover:bg-bg-primary'
@@ -848,6 +861,7 @@ const CreateProposalForm: FC = () => {
   const { writeContractAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const apolloClient = useApolloClient();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
 
   const availableActions = contract ? (ACTIONS_BY_CONTRACT[contract] ?? []) : [];
   const params = action ? (PARAMS_BY_ACTION[action] ?? []) : [];
@@ -868,12 +882,15 @@ const CreateProposalForm: FC = () => {
   });
 
   const handleCreateClick = () => {
+    if (authLoading) return;
+    if (!isAuthenticated) { toast('Sign in to create a proposal', 'warning'); return; }
     setShowErrors(true);
     if (!hasAnyError()) setConfirmOpen(true);
   };
 
   const handleConfirm = async () => {
     if (isSubmitting) return;
+    if (!isAuthenticated) { toast('Sign in to create a proposal', 'warning'); return; }
     setIsSubmitting(true);
     try {
       const { target, calldata } = buildProposalCalldata(contract, action, paramValues);
