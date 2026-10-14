@@ -13,6 +13,8 @@ import { Button, Card, Title } from '@/components/ui';
 import { MarketplaceCard, type MarketplaceProject } from '@/components/marketplace';
 import { GET_POOLS } from '@/lib/pool/operations';
 import { getCollectedHold } from '@/lib/pool/collected';
+import { getPoolPrice, formatPoolDate } from '@/lib/pool/display';
+import { getPoolStatus } from '@/lib/pool/status';
 import { formatTicker } from '@/lib/formatTicker';
 import Link from 'next/link';
 
@@ -28,30 +30,6 @@ function parseWeiToNum(raw: string | null | undefined): number {
   }
 }
 
-function formatDate(ts: number | null | undefined): string {
-  if (!ts) return '—';
-  const d = new Date(ts * 1000);
-  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getFullYear()).slice(-2)}`;
-}
-
-function getPoolPrice(pool: AnyPool): string {
-  try {
-    if (pool.virtualHoldReserve && pool.virtualRwaReserve) {
-      const hold = Number(BigInt(pool.virtualHoldReserve) / BigInt(10) ** BigInt(15)) / 1000;
-      const rwa = Number(BigInt(pool.virtualRwaReserve) / BigInt(10) ** BigInt(15)) / 1000;
-      if (rwa > 0) return `${(hold / rwa).toFixed(2)} USDT`;
-    }
-    if (pool.expectedHoldAmount && pool.expectedRwaAmount) {
-      const hold = Number(BigInt(pool.expectedHoldAmount) / BigInt(10) ** BigInt(15)) / 1000;
-      const rwa = Number(BigInt(pool.expectedRwaAmount) / BigInt(10) ** BigInt(15)) / 1000;
-      if (rwa > 0) return `${(hold / rwa).toFixed(2)} USDT`;
-    }
-  } catch {
-    /* fall through */
-  }
-  return '— USDT';
-}
-
 function getMonthlyProfit(rewardPercent: number | null | undefined): string {
   if (rewardPercent == null) return '0';
   const pct = rewardPercent > 100 ? rewardPercent / 100 : rewardPercent;
@@ -59,7 +37,7 @@ function getMonthlyProfit(rewardPercent: number | null | undefined): string {
 }
 
 function poolToProject(pool: AnyPool): MarketplaceProject {
-  const price = getPoolPrice(pool);
+  const price = `${getPoolPrice(pool)} USDT`;
   return {
     id: pool.id,
     name: pool.name,
@@ -70,7 +48,10 @@ function poolToProject(pool: AnyPool): MarketplaceProject {
     monthlyProfit: getMonthlyProfit(pool.rewardPercent),
     collected: parseWeiToNum(getCollectedHold(pool)),
     total: parseWeiToNum(pool.expectedHoldAmount),
-    dueDate: formatDate(pool.completionPeriodExpired ?? pool.entryPeriodExpired),
+    dueDate: formatPoolDate(pool.completionPeriodExpired ?? pool.entryPeriodExpired),
+    closesDate: formatPoolDate(pool.entryPeriodExpired),
+    status: getPoolStatus(pool),
+    startsOn: pool.entryPeriodStart && Date.now() / 1000 < pool.entryPeriodStart ? formatPoolDate(pool.entryPeriodStart) : undefined,
     createdAt: pool.createdAt ?? 0,
     riskScore: pool.riskScore ?? 0,
   };

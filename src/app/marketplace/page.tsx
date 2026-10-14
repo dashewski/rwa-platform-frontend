@@ -11,6 +11,8 @@ import { RISK_SCORE_RANGES, POOL_STAGES, POOL_TYPES, type PoolStage, type PoolTy
 import type { FilterChip } from '@/components/marketplace/MobileFiltersModal';
 import { GET_POOLS } from '@/lib/pool/operations';
 import { getCollectedHold } from '@/lib/pool/collected';
+import { getPoolPrice, formatPoolDate } from '@/lib/pool/display';
+import { getPoolStatus } from '@/lib/pool/status';
 import { GET_BUSINESSES } from '@/lib/business/operations';
 import { formatTicker } from '@/lib/formatTicker';
 import { getCountryByCode } from '@/lib/countries';
@@ -29,28 +31,6 @@ function parseWeiToNum(raw: string | null | undefined): number {
   }
 }
 
-function formatDate(ts: number | null | undefined): string {
-  if (!ts) return '—';
-  const d = new Date(ts * 1000);
-  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getFullYear()).slice(-2)}`;
-}
-
-function getPoolPrice(pool: AnyPool): string {
-  try {
-    if (pool.virtualHoldReserve && pool.virtualRwaReserve) {
-      const hold = Number(BigInt(pool.virtualHoldReserve) / BigInt(10) ** BigInt(15)) / 1000;
-      const rwa  = Number(BigInt(pool.virtualRwaReserve)  / BigInt(10) ** BigInt(15)) / 1000;
-      if (rwa > 0) return `${(hold / rwa).toFixed(2)} USDT`;
-    }
-    if (pool.expectedHoldAmount && pool.expectedRwaAmount) {
-      const hold = Number(BigInt(pool.expectedHoldAmount) / BigInt(10) ** BigInt(15)) / 1000;
-      const rwa  = Number(BigInt(pool.expectedRwaAmount)  / BigInt(10) ** BigInt(15)) / 1000;
-      if (rwa > 0) return `${(hold / rwa).toFixed(2)} USDT`;
-    }
-  } catch { /* fall through */ }
-  return '— USDT';
-}
-
 function getMonthlyProfit(rewardPercent: number | null | undefined): string {
   if (rewardPercent == null) return '0';
   // stored as basis points (e.g. 600 → 6%) or as plain percent (e.g. 6)
@@ -59,7 +39,7 @@ function getMonthlyProfit(rewardPercent: number | null | undefined): string {
 }
 
 function poolToProject(pool: AnyPool): MarketplaceProject {
-  const price = getPoolPrice(pool);
+  const price = `${getPoolPrice(pool)} USDT`;
   const priceNum = parseFloat(price) || 0;
   return {
     id:            pool.id,
@@ -71,7 +51,10 @@ function poolToProject(pool: AnyPool): MarketplaceProject {
     monthlyProfit: getMonthlyProfit(pool.rewardPercent),
     collected:     parseWeiToNum(getCollectedHold(pool)),
     total:         parseWeiToNum(pool.expectedHoldAmount),
-    dueDate:       formatDate(pool.completionPeriodExpired ?? pool.entryPeriodExpired),
+    dueDate:       formatPoolDate(pool.completionPeriodExpired ?? pool.entryPeriodExpired),
+    closesDate: formatPoolDate(pool.entryPeriodExpired),
+    status: getPoolStatus(pool),
+    startsOn: pool.entryPeriodStart && Date.now() / 1000 < pool.entryPeriodStart ? formatPoolDate(pool.entryPeriodStart) : undefined,
     createdAt:     pool.createdAt ?? 0,
     riskScore:     pool.riskScore ?? 0,
   };
@@ -183,6 +166,7 @@ const Marketplace: FC = () => {
   const countries: string[] = Array.from(new Set(Object.values(businessCountryMap))).sort();
 
   function getPoolStage(pool: AnyPool): PoolStage {
+    if (getPoolStatus(pool) === 'Upcoming') return 'upcoming';
     if (pool.isFullyReturned) return 'paying_profit';
     if (pool.isTargetReached) return 'paying_debt';
     return 'collecting';

@@ -15,6 +15,12 @@ export interface MarketplaceProject {
   collected: number;
   total: number;
   dueDate: string;
+  // End of the collecting period (same value the pool page shows as "Closes")
+  closesDate?: string;
+  // getPoolStatus() label: Upcoming / Collecting / Funded / Failed / Paused / Completed
+  status?: string;
+  // Set only while the pool hasn't opened yet
+  startsOn?: string;
   createdAt: number;
   riskScore: number;
 }
@@ -24,7 +30,7 @@ interface MarketplaceCardProps extends HTMLAttributes<HTMLAnchorElement> {
 }
 
 const MarketplaceCard: FC<MarketplaceCardProps> = ({ project, className, ...props }) => {
-  const { id, name, tokenTicker, logoUrl, iconBg, price, monthlyProfit, collected, total, dueDate } = project;
+  const { id, name, tokenTicker, logoUrl, iconBg, price, monthlyProfit, collected, total, dueDate, closesDate, status, startsOn } = project;
 
   const progressPercent = Math.min(100, Math.round((collected / total) * 100));
 
@@ -85,7 +91,10 @@ const MarketplaceCard: FC<MarketplaceCardProps> = ({ project, className, ...prop
         <div className={'h-px bg-grey-dark/40'} />
 
         <div className={'flex flex-col gap-2'}>
-          <span className={'text-sm text-grey-dark leading-[1.4]'}>Pool collecting status</span>
+          <div className={'flex items-center justify-between gap-2 text-sm leading-[1.4]'}>
+            <span className={'text-grey-dark'}>Status: <span className={'text-black font-medium'}>{status ?? 'Collecting'}</span></span>
+            {startsOn && <span className={'text-blue font-bold'}>Starts {startsOn}</span>}
+          </div>
 
           {/* Progress bar */}
           <div className={'relative h-8 bg-blue-dim rounded-lg overflow-hidden'}>
@@ -101,6 +110,12 @@ const MarketplaceCard: FC<MarketplaceCardProps> = ({ project, className, ...prop
           </div>
 
           {/* Due date */}
+          {closesDate && (
+            <div className={'flex items-center gap-2 text-sm leading-[1.4]'}>
+              <span className={'text-grey-dark font-normal'}>Closes:</span>
+              <span className={'text-blue font-bold'}>{closesDate}</span>
+            </div>
+          )}
           <div className={'flex items-center gap-2 text-sm leading-[1.4]'}>
             <span className={'text-grey-dark font-normal'}>Pool due:</span>
             <span className={'text-blue font-bold'}>{dueDate}</span>
