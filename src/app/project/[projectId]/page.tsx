@@ -446,7 +446,7 @@ const ProjectPage: FC = () => {
 
       <section className={'mb-12'}>
         <Wrapper>
-          <PoolsSection projectId={projectId} addPoolDisabledReason={addPoolDisabledReason} />
+          <PoolsSection projectId={projectId} canAddPool={canEdit} addPoolDisabledReason={addPoolDisabledReason} />
         </Wrapper>
       </section>
 

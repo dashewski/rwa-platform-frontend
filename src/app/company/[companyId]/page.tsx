@@ -333,7 +333,7 @@ const CompanyPage: FC = () => {
             <Title size={'xs'} level={2}>
               Projects
             </Title>
-            {businessesData?.getBusinesses && businessesData.getBusinesses.length > 0 && (
+            {canEdit && businessesData?.getBusinesses && businessesData.getBusinesses.length > 0 && (
               <Button
                 className={'rounded-xl'}
                 visualType={'quaternary'}
@@ -368,14 +368,17 @@ const CompanyPage: FC = () => {
                 </Link>
               );
             })}
-            {(!businessesData?.getBusinesses || businessesData.getBusinesses.length === 0) && (
-              <ButtonBorderDash
-                className={'min-h-[297px] max-w-110'}
-                onClick={() => setIsCreateProjectModalOpened(true)}
-              >
-                Create project
-              </ButtonBorderDash>
-            )}
+            {(!businessesData?.getBusinesses || businessesData.getBusinesses.length === 0) &&
+              (canEdit ? (
+                <ButtonBorderDash
+                  className={'min-h-[297px] max-w-110'}
+                  onClick={() => setIsCreateProjectModalOpened(true)}
+                >
+                  Create project
+                </ButtonBorderDash>
+              ) : (
+                <p className={'text-base text-label-tertiary'}>No projects yet.</p>
+              ))}
           </div>
         </Wrapper>
       </section>
