@@ -1,28 +1,24 @@
 'use client';
 
 import React, { FC, useState, useRef, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { DashboardLayout, Wrapper } from '@/components/layout';
 import { Button, Title, toast } from '@/components/ui';
 import { Calendar, ConfirmModal } from '@/components/common';
-import { useMutation, useApolloClient, useQuery } from '@apollo/client/react';
+import { useMutation, useQuery } from '@apollo/client/react';
 import Link from 'next/link';
 import { GET_BUSINESS_DEPLOY_INFO } from '@/lib/business/operations';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
+import { useAccount } from 'wagmi';
 import { parseUnits, formatUnits } from 'viem';
 import clsx from 'clsx';
-import { CREATE_POOL, REQUEST_POOL_APPROVAL_SIGNATURES, GET_SIGNATURE_TASK } from '@/lib/pool/operations';
-import { FACTORY_ABI, FACTORY_ADDRESS, HOLD_TOKEN_ADDRESS, ERC20_APPROVE_ABI } from '@/lib/contracts';
+import { CREATE_POOL } from '@/lib/pool/operations';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const TIMING_OPTIONS = Array.from({ length: 67 }, (_, i) => `${(i + 1) * 5} days`); // max 335 days: completionPeriod = timing + 30 ≤ 365
 const COMMISSION_RATE = 0.03;
 const MAX_TRANCHES = 20;
-const CREATE_POOL_FEE_RATIO = '300'; // 3% in basis points
 const PRICE_IMPACT_PERCENT = BigInt(101); // 100 is absent from the on-chain liquidity coefficient table
 const ENTRY_PERIOD_DAYS = 90; // contract max; calendar months can exceed 90 days
-const POLL_INTERVAL_MS = 3_000;
-const POLL_TIMEOUT_MS = 120_000;
 const HOLD_DECIMALS = 18;
 
 // ── Deploy helpers ─────────────────────────────────────────────────────────────
@@ -94,36 +90,6 @@ function allocateBpsExact(weights: bigint[]): bigint[] {
 
 function daysFromTimingOption(option: string): number {
   return parseInt(option);
-}
-
-function pollUntilComplete(
-  poll: () => Promise<{ completed: boolean; expired: number; signatures: { signer: string; signature: string }[] | null }>,
-  timeoutMs = POLL_TIMEOUT_MS
-): Promise<{ signers: `0x${string}`[]; signatures: `0x${string}`[]; expired: bigint }> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const run = async () => {
-      try {
-        const task = await poll();
-        if (task.completed && task.signatures?.length) {
-          resolve({
-            signers: task.signatures.map(s => s.signer as `0x${string}`),
-            signatures: task.signatures.map(s => s.signature as `0x${string}`),
-            expired: BigInt(task.expired),
-          });
-          return;
-        }
-        if (Date.now() - start > timeoutMs) {
-          reject(new Error('Signature task timed out — try again'));
-          return;
-        }
-        setTimeout(run, POLL_INTERVAL_MS);
-      } catch (e) {
-        reject(e);
-      }
-    };
-    run();
-  });
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -284,11 +250,11 @@ const AddPoolContent: FC = () => {
   const searchParams = useSearchParams();
   const businessId = searchParams.get('businessId') ?? '';
   const { address: walletAddress } = useAccount();
-  const apolloClient = useApolloClient();
-  const publicClient = usePublicClient();
-  const { writeContractAsync } = useWriteContract();
-  const [deployTxHash, setDeployTxHash] = useState<`0x${string}` | undefined>();
-  const { isLoading: isConfirming } = useWaitForTransactionReceipt({ hash: deployTxHash });
+  const router = useRouter();
+  // Set synchronously on the first click (state updates aren't instant, so a fast double click
+  // could otherwise create two pools: createPool has no idempotency, every call is a new record).
+  // Stays locked once the pool exists, as we leave the page right after.
+  const creatingRef = useRef(false);
 
   // The pool's on-chain deploy needs the project's RWA contract, so block everything
   // (including the DB record creation) until the backend reports its tokenAddress.
@@ -302,10 +268,8 @@ const AddPoolContent: FC = () => {
   const projectNotDeployed = !!businessId && !businessDeployLoading && !projectDeployed;
 
   const [createPool] = useMutation(CREATE_POOL);
-  const [requestApproval] = useMutation(REQUEST_POOL_APPROVAL_SIGNATURES);
 
-  const [deployStatus, setDeployStatus] = useState<string>('');
-  const [isDeploying, setIsDeploying] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [showDeployModal, setShowDeployModal] = useState(false);
 
   const [name, setName] = useState('');
@@ -445,7 +409,7 @@ const AddPoolContent: FC = () => {
   }, [startDate, tranches, goalWei]);
 
   // ── Validate and open confirmation modal ──────────────────────────────────
-  const handleDeployClick = () => {
+  const handleCreateClick = () => {
     if (projectNotDeployed || businessDeployLoading) {
       toast('Deploy the project first, then create a pool', 'error');
       return;
@@ -474,14 +438,20 @@ const AddPoolContent: FC = () => {
     setShowDeployModal(true);
   };
 
-  // ── Deploy pool ────────────────────────────────────────────────────────────
-  const handleDeploy = async () => {
+  // ── Create pool ────────────────────────────────────────────────────────────
+  // Only saves the pool (a draft with its own id). Requesting signatures and the on-chain deploy
+  // are a separate step on the pool page, so this button can never deploy — or duplicate — a pool.
+  const handleCreate = async () => {
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     setShowDeployModal(false);
     if (!projectDeployed) {
       toast('Deploy the project first, then create a pool', 'error');
+      creatingRef.current = false;
       return;
     }
-    setIsDeploying(true);
+    let created = false;
+    setIsCreating(true);
     try {
       const { startUnix, endUnix, completionPeriodExpiredUnix, incomingAmounts, incomingDeadlines, outgoingAmounts, outgoingTimestamps } =
         buildTranches();
@@ -493,12 +463,9 @@ const AddPoolContent: FC = () => {
       if (totalIncoming !== totalExpected) {
         const expectedUsdt = Number(totalExpected / BigInt(10 ** 18));
         toast(`Tranche amounts must sum to exactly ${expectedUsdt} USDT (goal + ${profitNum}% profit)`, 'error');
-        setIsDeploying(false);
         return;
       }
 
-      // Step 1: Create pool record in DB
-      setDeployStatus('Creating pool record…');
       const { data: poolData } = await createPool({
         variables: {
           input: {
@@ -533,124 +500,54 @@ const AddPoolContent: FC = () => {
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const pool = (poolData as any)?.createPool as { id: string; rwaAddress: string } | undefined;
+      const pool = (poolData as any)?.createPool as { id: string } | undefined;
       if (!pool) throw new Error('Failed to create pool record');
-
-      // Step 2: Request backend approval signatures
-      setDeployStatus('Requesting approval signatures…');
-      const { data: approvalData } = await requestApproval({
-        variables: {
-          input: {
-            id: pool.id,
-            ownerWallet: walletAddress,
-            deployerWallet: walletAddress,
-            createPoolFeeRatio: CREATE_POOL_FEE_RATIO,
-          },
-        },
-      });
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const taskId = (approvalData as any)?.requestPoolApprovalSignatures?.taskId as string | undefined;
-      if (!taskId) throw new Error('Failed to get approval task ID');
-
-      // Step 3: Poll until signers have signed
-      setDeployStatus('Waiting for backend signatures…');
-      const { signers, signatures, expired } = await pollUntilComplete(async () => {
-        const result = await apolloClient.query({
-          query: GET_SIGNATURE_TASK,
-          variables: { input: { taskId } },
-          fetchPolicy: 'network-only',
-        });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const task = (result.data as any)?.getSignatureTask;
-        return {
-          completed: task?.completed ?? false,
-          expired: task?.expired ?? 0,
-          signatures: task?.signatures ?? null,
-        };
-      });
-
-      // Step 4: Approve HOLD token spend
-      setDeployStatus('Approving HOLD token spend…');
-      const approveTxHash = await writeContractAsync({
-        address: HOLD_TOKEN_ADDRESS,
-        abi: ERC20_APPROVE_ABI,
-        functionName: 'approve',
-        args: [FACTORY_ADDRESS, BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')],
-      });
-      if (!publicClient) throw new Error('No public client available');
-      await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
-
-      // Step 5: Call the Factory contract
-      setDeployStatus('Sending transaction…');
-      console.log('[deployPool] args', {
-        createPoolFeeRatio: CREATE_POOL_FEE_RATIO,
-        entityId: pool.id,
-        rwa: pool.rwaAddress,
-        expectedHoldAmount: holdAmount.toString(),
-        expectedRwaAmount: goalNum.toString(),
-        priceImpactPercent: PRICE_IMPACT_PERCENT.toString(),
-        rewardPercent: rewardBps.toString(),
-        entryPeriodStart: startUnix,
-        entryPeriodExpired: endUnix,
-        completionPeriodExpired: completionPeriodExpiredUnix.toString(),
-        entryFeePercent: '100',
-        exitFeePercent: '100',
-        fixedSell: poolType === 'fixed',
-        allowEntryBurn: false,
-        awaitCompletionExpired: true,
-        floatingOutTranchesTimestamps: false,
-        outgoingAmounts: outgoingAmounts.map(a => a.toString()),
-        outgoingTimestamps: outgoingTimestamps.map(t => t.toString()),
-        incomingAmounts: incomingAmounts.map(a => a.toString()),
-        incomingDeadlines: incomingDeadlines.map(d => d.toString()),
-        signers,
-        signatures,
-        expired: expired.toString(),
-      });
-      const txHash = await writeContractAsync({
-        address: FACTORY_ADDRESS,
-        abi: FACTORY_ABI,
-        functionName: 'deployPool',
-        args: [
-          BigInt(CREATE_POOL_FEE_RATIO),
-          pool.id,
-          pool.rwaAddress as `0x${string}`,
-          holdAmount,
-          BigInt(goalNum),
-          PRICE_IMPACT_PERCENT,
-          rewardBps,
-          BigInt(startUnix),
-          BigInt(endUnix),
-          completionPeriodExpiredUnix,
-          BigInt(100),
-          BigInt(100),
-          poolType === 'fixed',
-          false,
-          true,
-          false,
-          outgoingAmounts,
-          outgoingTimestamps,
-          incomingAmounts,
-          incomingDeadlines,
-          signers,
-          signatures,
-          expired,
-        ],
-        gas: BigInt(2_000_000),
-      });
-
-      setDeployTxHash(txHash);
-      setDeployStatus('Waiting for confirmation…');
-      toast('Pool deployed! Waiting for confirmation…');
+      created = true;
+      toast('Pool created. Deploy it from the pool page.');
+      router.push(`/pool/${pool.id}`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Deploy failed';
+      const msg = err instanceof Error ? err.message : 'Failed to create pool';
       toast(msg, 'error');
     } finally {
-      setIsDeploying(false);
-      setDeployStatus('');
+      if (!created) creatingRef.current = false;
+      setIsCreating(false);
     }
   };
+
+  // The form is only usable for a project that is deployed on-chain: the backend refuses to
+  // create a pool without the project's tokenAddress. Until then show why, not the form.
+  if (!businessId || businessDeployLoading || projectNotDeployed) {
+    return (
+      <DashboardLayout>
+        <section className="mb-10">
+          <Wrapper>
+            <div className="border-b border-stroke-primary pb-6">
+              <Title size="xs">New pool</Title>
+            </div>
+            <div className="mt-6 max-w-xl rounded-xl border border-stroke-primary bg-bg-tertiary px-4 py-4 text-sm text-grey-dark flex flex-col gap-3">
+              {!businessId ? (
+                <>
+                  <span>Pools are created inside a project. Open one of your projects and press Add pool there.</span>
+                  <Link href="/my-companies" className="text-blue font-medium hover:underline">
+                    Go to my companies
+                  </Link>
+                </>
+              ) : businessDeployLoading ? (
+                <span>Checking the project…</span>
+              ) : (
+                <>
+                  <span>This project isn&apos;t deployed on-chain yet, so a pool can&apos;t be created.</span>
+                  <Link href={`/project/${businessId}`} className="text-blue font-medium hover:underline">
+                    Go to the project and deploy it first
+                  </Link>
+                </>
+              )}
+            </div>
+          </Wrapper>
+        </section>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -660,16 +557,13 @@ const AddPoolContent: FC = () => {
           <div className="border-b border-stroke-primary pb-6 flex justify-between items-center max-md:flex-wrap max-md:gap-3">
             <Title size="xs">New pool</Title>
             <div className="flex items-center gap-3">
-              {deployStatus && (
-                <span className="text-sm text-grey-dark animate-pulse">{deployStatus}</span>
-              )}
               <Button
                 visualType="quaternary"
                 type="button"
-                onClick={handleDeployClick}
-                disabled={isDeploying || isConfirming || projectNotDeployed || businessDeployLoading}
+                onClick={handleCreateClick}
+                disabled={isCreating || projectNotDeployed || businessDeployLoading}
               >
-                {isDeploying || isConfirming ? 'Deploying…' : 'Deploy pool'}
+                {isCreating ? 'Creating…' : 'Create pool'}
               </Button>
             </div>
           </div>
@@ -677,15 +571,6 @@ const AddPoolContent: FC = () => {
       </section>
 
       <Wrapper>
-        {projectNotDeployed && (
-          <div className="mb-6 rounded-xl border border-stroke-primary bg-bg-tertiary px-4 py-3 text-sm text-grey-dark">
-            This project isn&apos;t deployed on-chain yet, so a pool can&apos;t be created.{' '}
-            <Link href={`/project/${businessId}`} className="text-blue font-medium hover:underline">
-              Go to the project and deploy it first
-            </Link>
-            .
-          </div>
-        )}
         <div className="flex flex-col gap-10 pb-16">
 
           {/* ── Information ──────────────────────────────────────────────────── */}
@@ -1054,11 +939,11 @@ const AddPoolContent: FC = () => {
       </Wrapper>
       <ConfirmModal
         isOpen={showDeployModal}
-        title={'Deploy pool?'}
+        title={'Create pool?'}
         heading={'Care to double-check?'}
-        description={"You won't be able to change pool parameters after the pool is deployed. Make sure everything is correct"}
-        confirmText={'Deploy'}
-        onConfirm={handleDeploy}
+        description={"The pool will be saved first and deployed on-chain from its page. Parameters can't be changed once signatures for the deploy are requested, so make sure everything is correct"}
+        confirmText={'Create'}
+        onConfirm={handleCreate}
         onCancel={() => setShowDeployModal(false)}
       />
     </DashboardLayout>

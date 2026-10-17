@@ -16,7 +16,7 @@ import { GET_BUSINESS_WITH_RISK } from '@/lib/business/operations';
 import { GET_COMPANY } from '@/lib/company/operations';
 import { Button, Icon, Title } from '@/components/ui';
 import { ShareMenu } from '@/components/common';
-import { BuyTokenWidget, EditPoolModal, PriceChart, PoolTransactions } from '@/components/pool';
+import { BuyTokenWidget, EditPoolModal, PriceChart, PoolTransactions, PoolDeployButton } from '@/components/pool';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -147,7 +147,7 @@ const PoolPage: FC = () => {
   const [priceChartOpen, setPriceChartOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
-  const { data: poolData } = useQuery(GET_POOL_BY_ID, {
+  const { data: poolData, refetch: refetchPool } = useQuery(GET_POOL_BY_ID, {
     variables: { id: poolId },
   });
 
@@ -276,7 +276,10 @@ const PoolPage: FC = () => {
             </div>
 
             {/* Right: Edit / Share buttons */}
-            <div className='flex gap-2 md:mt-2 md:shrink-0'>
+            <div className='flex flex-wrap gap-2 md:mt-2 md:shrink-0'>
+              {canEditPool && !pool?.poolAddress && (
+                <PoolDeployButton poolId={poolId} onDeployed={() => refetchPool()} />
+              )}
               {canEditPool && (
                 <Button visualType={'quinary'} onClick={() => setEditOpen(true)}>
                   <Icon name={'edit'} />
@@ -487,6 +490,19 @@ const PoolPage: FC = () => {
               {/* ── Buy / Sell widget ─────────────────────────────────────── */}
               {(() => {
                 if (!pool) return <BuyTokenWidget pool={pool} />;
+                if (!pool.poolAddress) {
+                  // A saved pool that hasn't been deployed on-chain yet can't be traded
+                  return (
+                    <div className='bg-white border border-stroke-primary rounded-2xl p-5 flex flex-col gap-2'>
+                      <span className='text-base font-bold text-[#1D1D1F]'>Not deployed yet</span>
+                      <span className='text-sm text-grey-dark'>
+                        {canEditPool
+                          ? 'Deploy the pool to open it for investors.'
+                          : 'This pool has not been deployed yet.'}
+                      </span>
+                    </div>
+                  );
+                }
                 const start = pool.entryPeriodStart;
                 const { buyDisabledReason, sellDisabledReason } = getPoolTradeState(pool, now);
                 if (start && now < start) {

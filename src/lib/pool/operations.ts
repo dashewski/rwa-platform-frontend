@@ -222,3 +222,44 @@ export const GET_SIGNATURE_TASK = gql`
     }
   }
 `;
+
+// Everything the Deploy button needs: the signed fields (the deployPool args are rebuilt from
+// them) plus the state of the signature task, so a pending task is reused instead of re-requested.
+export const GET_POOL_DEPLOY_INFO = gql`
+  query GetPoolDeployInfo($id: ID!) {
+    getPool(id: $id) {
+      id
+      poolAddress
+      rwaAddress
+      expectedHoldAmount
+      expectedRwaAmount
+      priceImpactPercent
+      rewardPercent
+      entryPeriodStart
+      entryPeriodExpired
+      completionPeriodExpired
+      entryFeePercent
+      exitFeePercent
+      fixedSell
+      allowEntryBurn
+      awaitCompletionExpired
+      floatingOutTranchesTimestamps
+      outgoingTranches {
+        amount
+        timestamp
+      }
+      incomingTranches {
+        amount
+        expiredAt
+      }
+      approvalSignaturesTaskId
+      approvalSignaturesTaskExpired
+    }
+  }
+`;
+
+export const REJECT_POOL_APPROVAL_SIGNATURES = gql`
+  mutation RejectPoolApprovalSignatures($id: ID!) {
+    rejectPoolApprovalSignatures(id: $id)
+  }
+`;
