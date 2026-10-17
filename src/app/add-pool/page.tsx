@@ -12,7 +12,9 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicCl
 import { parseUnits, formatUnits } from 'viem';
 import clsx from 'clsx';
 import { CREATE_POOL, REQUEST_POOL_APPROVAL_SIGNATURES, GET_SIGNATURE_TASK, GET_POOL_BY_ID } from '@/lib/pool/operations';
-import { FACTORY_ABI, FACTORY_ADDRESS, HOLD_TOKEN_ADDRESS, ERC20_APPROVE_ABI } from '@/lib/contracts';
+import { FACTORY_ABI, FACTORY_ADDRESS, HOLD_TOKEN_ADDRESS } from '@/lib/contracts';
+import { ensureMaxAllowance } from '@/lib/web3/allowance';
+import { isAlreadyDeployedError } from '@/lib/web3/errors';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const TIMING_OPTIONS = Array.from({ length: 67 }, (_, i) => `${(i + 1) * 5} days`); // max 335 days: completionPeriod = timing + 30 ≤ 365
@@ -294,6 +296,10 @@ const AddPoolContent: FC = () => {
   // backend to index it (it sets poolAddress after the Pool_Deployed event) before redirecting
   const [deployedPoolId, setDeployedPoolId] = useState<string | undefined>();
   const [isRegistering, setIsRegistering] = useState(false);
+  // Set synchronously on the first click (state updates aren't instant, so a fast double click
+  // could otherwise start two deploys, and every start creates a brand-new pool record).
+  // Stays locked once the deploy tx is sent; only released if that tx reverts.
+  const deployingRef = useRef(false);
 
   // The pool's on-chain deploy needs the project's RWA contract, so block everything
   // (including the DB record creation) until the backend reports its tokenAddress.
@@ -481,11 +487,16 @@ const AddPoolContent: FC = () => {
 
   // ── Deploy pool ────────────────────────────────────────────────────────────
   const handleDeploy = async () => {
+    if (deployingRef.current) return;
+    deployingRef.current = true;
     setShowDeployModal(false);
     if (!projectDeployed) {
       toast('Deploy the project first, then create a pool', 'error');
+      deployingRef.current = false;
       return;
     }
+    let txSent = false;
+    let createdPoolId: string | undefined;
     setIsDeploying(true);
     try {
       const { startUnix, endUnix, completionPeriodExpiredUnix, incomingAmounts, incomingDeadlines, outgoingAmounts, outgoingTimestamps } =
@@ -540,6 +551,7 @@ const AddPoolContent: FC = () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const pool = (poolData as any)?.createPool as { id: string; rwaAddress: string } | undefined;
       if (!pool) throw new Error('Failed to create pool record');
+      createdPoolId = pool.id;
 
       // Step 2: Request backend approval signatures
       setDeployStatus('Requesting approval signatures…');
@@ -577,14 +589,15 @@ const AddPoolContent: FC = () => {
 
       // Step 4: Approve HOLD token spend
       setDeployStatus('Approving HOLD token spend…');
-      const approveTxHash = await writeContractAsync({
-        address: HOLD_TOKEN_ADDRESS,
-        abi: ERC20_APPROVE_ABI,
-        functionName: 'approve',
-        args: [FACTORY_ADDRESS, BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')],
-      });
       if (!publicClient) throw new Error('No public client available');
-      await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
+      if (!walletAddress) throw new Error('Connect your wallet first');
+      await ensureMaxAllowance({
+        publicClient,
+        writeContractAsync,
+        token: HOLD_TOKEN_ADDRESS,
+        owner: walletAddress,
+        spender: FACTORY_ADDRESS,
+      });
 
       // Step 5: Call the Factory contract
       setDeployStatus('Sending transaction…');
@@ -645,14 +658,23 @@ const AddPoolContent: FC = () => {
         gas: BigInt(2_000_000),
       });
 
+      txSent = true;
       setDeployedPoolId(pool.id);
       setDeployTxHash(txHash);
       setDeployStatus('Waiting for confirmation…');
       toast('Pool deployed! Waiting for confirmation…');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Deploy failed';
-      toast(msg, 'error');
+      if (isAlreadyDeployedError(err) && createdPoolId) {
+        // Not a failure: the pool is already on-chain, so just take the user to it
+        txSent = true;
+        toast('This pool is already deployed.', 'warning');
+        router.push(`/pool/${createdPoolId}`);
+      } else {
+        const msg = err instanceof Error ? err.message : 'Deploy failed';
+        toast(msg, 'error');
+      }
     } finally {
+      if (!txSent) deployingRef.current = false;
       setIsDeploying(false);
       setDeployStatus('');
     }
@@ -695,8 +717,46 @@ const AddPoolContent: FC = () => {
   }, [deployedPoolId, deployReceipt?.status, apolloClient, router]);
 
   useEffect(() => {
-    if (deployReceipt?.status === 'reverted') toast('Pool deployment transaction failed', 'error');
+    if (deployReceipt?.status === 'reverted') {
+      deployingRef.current = false;
+      toast('Pool deployment transaction failed', 'error');
+    }
   }, [deployReceipt?.status]);
+
+  // The form is only usable for a project that is deployed on-chain: the backend refuses to
+  // create a pool without the project's tokenAddress. Until then show why, not the form.
+  if (!businessId || businessDeployLoading || projectNotDeployed) {
+    return (
+      <DashboardLayout>
+        <section className="mb-10">
+          <Wrapper>
+            <div className="border-b border-stroke-primary pb-6">
+              <Title size="xs">New pool</Title>
+            </div>
+            <div className="mt-6 max-w-xl rounded-xl border border-stroke-primary bg-bg-tertiary px-4 py-4 text-sm text-grey-dark flex flex-col gap-3">
+              {!businessId ? (
+                <>
+                  <span>Pools are created inside a project. Open one of your projects and press Add pool there.</span>
+                  <Link href="/my-companies" className="text-blue font-medium hover:underline">
+                    Go to my companies
+                  </Link>
+                </>
+              ) : businessDeployLoading ? (
+                <span>Checking the project…</span>
+              ) : (
+                <>
+                  <span>This project isn&apos;t deployed on-chain yet, so a pool can&apos;t be created.</span>
+                  <Link href={`/project/${businessId}`} className="text-blue font-medium hover:underline">
+                    Go to the project and deploy it first
+                  </Link>
+                </>
+              )}
+            </div>
+          </Wrapper>
+        </section>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -725,15 +785,6 @@ const AddPoolContent: FC = () => {
       </section>
 
       <Wrapper>
-        {projectNotDeployed && (
-          <div className="mb-6 rounded-xl border border-stroke-primary bg-bg-tertiary px-4 py-3 text-sm text-grey-dark">
-            This project isn&apos;t deployed on-chain yet, so a pool can&apos;t be created.{' '}
-            <Link href={`/project/${businessId}`} className="text-blue font-medium hover:underline">
-              Go to the project and deploy it first
-            </Link>
-            .
-          </div>
-        )}
         <div className="flex flex-col gap-10 pb-16">
 
           {/* ── Information ──────────────────────────────────────────────────── */}

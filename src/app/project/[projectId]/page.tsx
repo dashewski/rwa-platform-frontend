@@ -28,7 +28,9 @@ import {
   REQUEST_BUSINESS_APPROVAL_SIGNATURES,
 } from '@/lib/business/operations';
 import { GET_SIGNATURE_TASK } from '@/lib/pool/operations';
-import { ERC20_APPROVE_ABI, FACTORY_ABI, FACTORY_ADDRESS, HOLD_TOKEN_ADDRESS } from '@/lib/contracts';
+import { FACTORY_ABI, FACTORY_ADDRESS, HOLD_TOKEN_ADDRESS } from '@/lib/contracts';
+import { ensureMaxAllowance } from '@/lib/web3/allowance';
+import { isAlreadyDeployedError } from '@/lib/web3/errors';
 import { GET_COMPANY } from '@/lib/company/operations';
 import { NewsList } from '@/components/news';
 import { CountryChip, Modal, ShareMenu, SocialLinksRow } from '@/components/common';
@@ -241,14 +243,14 @@ const ProjectPage: FC = () => {
 
       // Approve factory to spend HOLD tokens (contract charges CREATE_RWA_FEE × 10^18)
       setDeployStatus('approving-hold');
-      const approveTxHash = await writeContractAsync({
-        address: HOLD_TOKEN_ADDRESS,
-        abi: ERC20_APPROVE_ABI,
-        functionName: 'approve',
-        args: [FACTORY_ADDRESS, BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')],
-      });
       if (!publicClient) throw new Error('No public client available');
-      await publicClient.waitForTransactionReceipt({ hash: approveTxHash });
+      await ensureMaxAllowance({
+        publicClient,
+        writeContractAsync,
+        token: HOLD_TOKEN_ADDRESS,
+        owner: walletAddress,
+        spender: FACTORY_ADDRESS,
+      });
 
       setDeployStatus('sending-tx');
       const txHash = await writeContractAsync({
@@ -271,6 +273,13 @@ const ProjectPage: FC = () => {
       setDeployTxHash(txHash);
       setDeployStatus('waiting-confirmation');
     } catch (err) {
+      if (isAlreadyDeployedError(err)) {
+        // Not a failure: the project is already on-chain (e.g. a second click while the UI lagged).
+        // Switch to waiting for the backend to report its address instead of showing an error.
+        toast('This project is already deployed.', 'warning');
+        setDeployStatus('waiting-indexing');
+        return;
+      }
       const message = err instanceof Error ? err.message : 'Deploy failed';
       toast(message, 'error');
       setDeployStatus('idle');
