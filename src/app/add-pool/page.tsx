@@ -1,7 +1,7 @@
 'use client';
 
 import React, { FC, useState, useRef, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { DashboardLayout, Wrapper } from '@/components/layout';
 import { Button, Title, toast } from '@/components/ui';
 import { Calendar, ConfirmModal } from '@/components/common';
@@ -11,7 +11,7 @@ import { GET_BUSINESS_DEPLOY_INFO } from '@/lib/business/operations';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { parseUnits, formatUnits } from 'viem';
 import clsx from 'clsx';
-import { CREATE_POOL, REQUEST_POOL_APPROVAL_SIGNATURES, GET_SIGNATURE_TASK } from '@/lib/pool/operations';
+import { CREATE_POOL, REQUEST_POOL_APPROVAL_SIGNATURES, GET_SIGNATURE_TASK, GET_POOL_BY_ID } from '@/lib/pool/operations';
 import { FACTORY_ABI, FACTORY_ADDRESS, HOLD_TOKEN_ADDRESS, ERC20_APPROVE_ABI } from '@/lib/contracts';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -288,7 +288,12 @@ const AddPoolContent: FC = () => {
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const [deployTxHash, setDeployTxHash] = useState<`0x${string}` | undefined>();
-  const { isLoading: isConfirming } = useWaitForTransactionReceipt({ hash: deployTxHash });
+  const { isLoading: isConfirming, data: deployReceipt } = useWaitForTransactionReceipt({ hash: deployTxHash });
+  const router = useRouter();
+  // id of the pool record whose deployPool tx is in flight, and whether we're waiting for the
+  // backend to index it (it sets poolAddress after the Pool_Deployed event) before redirecting
+  const [deployedPoolId, setDeployedPoolId] = useState<string | undefined>();
+  const [isRegistering, setIsRegistering] = useState(false);
 
   // The pool's on-chain deploy needs the project's RWA contract, so block everything
   // (including the DB record creation) until the backend reports its tokenAddress.
@@ -640,6 +645,7 @@ const AddPoolContent: FC = () => {
         gas: BigInt(2_000_000),
       });
 
+      setDeployedPoolId(pool.id);
       setDeployTxHash(txHash);
       setDeployStatus('Waiting for confirmation…');
       toast('Pool deployed! Waiting for confirmation…');
@@ -652,6 +658,46 @@ const AddPoolContent: FC = () => {
     }
   };
 
+  // Once the tx is mined, wait for the backend to index the pool (poolAddress), then open it.
+  // If indexing is slow we still redirect after 2 min — the pool page copes with a pool that
+  // isn't registered yet.
+  useEffect(() => {
+    if (!deployedPoolId || deployReceipt?.status !== 'success') return;
+    let cancelled = false;
+    setIsRegistering(true);
+    const startedAt = Date.now();
+    const go = (indexed: boolean) => {
+      if (cancelled) return;
+      if (!indexed) toast('Pool deployed. It may take a minute to appear everywhere.', 'warning');
+      router.push(`/pool/${deployedPoolId}`);
+    };
+    const tick = async () => {
+      try {
+        const result = await apolloClient.query({
+          query: GET_POOL_BY_ID,
+          variables: { id: deployedPoolId },
+          fetchPolicy: 'network-only',
+        });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((result.data as any)?.getPool?.poolAddress) return go(true);
+      } catch {
+        // network hiccup — keep polling
+      }
+      if (cancelled) return;
+      if (Date.now() - startedAt > 120_000) return go(false);
+      timer = setTimeout(tick, 3000);
+    };
+    let timer: ReturnType<typeof setTimeout> = setTimeout(tick, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [deployedPoolId, deployReceipt?.status, apolloClient, router]);
+
+  useEffect(() => {
+    if (deployReceipt?.status === 'reverted') toast('Pool deployment transaction failed', 'error');
+  }, [deployReceipt?.status]);
+
   return (
     <DashboardLayout>
       {/* Page header */}
@@ -660,16 +706,18 @@ const AddPoolContent: FC = () => {
           <div className="border-b border-stroke-primary pb-6 flex justify-between items-center max-md:flex-wrap max-md:gap-3">
             <Title size="xs">New pool</Title>
             <div className="flex items-center gap-3">
-              {deployStatus && (
-                <span className="text-sm text-grey-dark animate-pulse">{deployStatus}</span>
+              {(deployStatus || isRegistering) && (
+                <span className="text-sm text-grey-dark animate-pulse">
+                  {isRegistering ? 'Waiting for the backend to register the pool…' : deployStatus}
+                </span>
               )}
               <Button
                 visualType="quaternary"
                 type="button"
                 onClick={handleDeployClick}
-                disabled={isDeploying || isConfirming || projectNotDeployed || businessDeployLoading}
+                disabled={isDeploying || isConfirming || isRegistering || projectNotDeployed || businessDeployLoading}
               >
-                {isDeploying || isConfirming ? 'Deploying…' : 'Deploy pool'}
+                {isDeploying || isConfirming || isRegistering ? 'Deploying…' : 'Deploy pool'}
               </Button>
             </div>
           </div>
