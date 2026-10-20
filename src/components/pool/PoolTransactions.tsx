@@ -73,6 +73,13 @@ function shortAddress(addr: string): string {
   return addr.slice(0, 6) + '...' + addr.slice(-4);
 }
 
+// The indexer calls a purchase MINT and a sale BURN; on the cards shown to users say what it is
+function txTypeLabel(type: string): string {
+  if (type === 'MINT') return 'Buy';
+  if (type === 'BURN') return 'Sell';
+  return type;
+}
+
 function formatHoldAmount(raw: string): string {
   if (!raw) return '0';
   try {
@@ -204,7 +211,33 @@ const PoolTransactions: FC<PoolTransactionsProps> = ({ poolAddress }) => {
           No transactions yet
         </div>
       ) : (
-        <div className='max-h-80 overflow-y-auto'>
+        <>
+        {/* Mobile: one card per transaction (the 6-column table doesn't fit a phone screen) */}
+        <div className='md:hidden max-h-96 overflow-y-auto divide-y divide-stroke-primary'>
+          {transactions.map(tx => {
+            const isMint = tx.transactionType === 'MINT';
+            return (
+              <div key={tx.id} className='px-4 py-3 flex flex-col gap-2'>
+                <div className='flex items-center justify-between gap-2'>
+                  <span className={clsxTxType(isMint)}>{txTypeLabel(tx.transactionType)}</span>
+                  <span className='text-grey-dark text-xs'>{formatTime(tx.timestamp)}</span>
+                </div>
+                <div className='grid grid-cols-2 gap-x-3 gap-y-1 text-sm'>
+                  <span className='text-grey-dark text-xs'>RWA amount</span>
+                  <span className='text-right break-all'>{tx.rwaAmount}</span>
+                  <span className='text-grey-dark text-xs'>HOLD amount</span>
+                  <span className='text-right'>{formatHoldAmount(tx.holdAmount)}</span>
+                  <span className='text-grey-dark text-xs'>Bonus</span>
+                  <span className='text-right'>{tx.bonusAmount || '0'}</span>
+                  <span className='text-grey-dark text-xs'>User</span>
+                  <span className='text-right text-xs text-grey-dark'>{shortAddress(tx.userAddress)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className='max-md:hidden max-h-80 overflow-y-auto'>
           {/* Table header */}
           <div
             className='grid px-5 py-3 text-xs text-grey-dark border-b border-stroke-primary bg-bg-tertiary sticky top-0'
@@ -245,6 +278,7 @@ const PoolTransactions: FC<PoolTransactionsProps> = ({ poolAddress }) => {
             })}
           </div>
         </div>
+        </>
       )}
     </div>
   );
