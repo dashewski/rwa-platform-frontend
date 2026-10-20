@@ -110,7 +110,7 @@ const PoolCard: FC<{ pool: Pool; projectId: string }> = ({ pool, projectId }) =>
         </div>
       </div>
 
-      <div className={'flex items-center justify-between text-sm text-grey-dark mb-4'}>
+      <div className={'flex items-center justify-between max-md:flex-wrap max-md:gap-x-3 text-sm text-grey-dark mb-4'}>
         <span>Status: {status}</span>
         <span>Closes: {formatDate(pool.entryPeriodExpired)}</span>
       </div>
@@ -187,9 +187,22 @@ const PoolsSection: FC<PoolsSectionProps> = ({ projectId, canAddPool, addPoolDis
           )}
         </div>
       ) : (
-        <div className={'grid grid-cols-2 gap-4'}>
+        // Mobile: pools sit in one swipeable row (snap per card) instead of being squeezed into two
+        // half-width columns; from md up it is the same two-column grid as before.
+        <div
+          className={
+            'flex gap-4 overflow-x-auto snap-x snap-mandatory pb-2 max-md:[scrollbar-width:none] md:grid md:grid-cols-2 md:overflow-visible md:pb-0'
+          }
+        >
           {pools.map((pool: Pool) => (
-            <PoolCard key={pool.id} pool={pool} projectId={projectId} />
+            <div
+              key={pool.id}
+              className={
+                (pools.length > 1 ? 'max-md:w-[85%]' : 'max-md:w-full') + ' max-md:shrink-0 max-md:snap-start md:contents'
+              }
+            >
+              <PoolCard pool={pool} projectId={projectId} />
+            </div>
           ))}
         </div>
       )}

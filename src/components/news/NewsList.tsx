@@ -23,8 +23,9 @@ function extractText(content: string): string {
   return content;
 }
 
-function timeAgo(dateStr: number): string {
-  const diffMs = Date.now() - new Date(dateStr).getTime();
+// createdAt comes from the API in unix seconds (Date wants milliseconds)
+function timeAgo(createdAtSec: number): string {
+  const diffMs = Date.now() - new Date(createdAtSec * 1000).getTime();
   const diffMin = Math.floor(diffMs / 60000);
   const diffHour = Math.floor(diffMs / 3600000);
   const diffDay = Math.floor(diffMs / 86400000);

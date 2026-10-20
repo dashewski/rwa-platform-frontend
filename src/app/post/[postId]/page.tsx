@@ -76,7 +76,7 @@ const ReadPostPage: FC = () => {
             <p className={'text-[28px] font-semibold md:text-[36px] mb-4'}>{post.title}</p>
 
             <p className={'text-sm text-label-tertiary mb-6'}>
-              {new Date(post.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+              {new Date(post.createdAt * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
             </p>
 
             <div className={'flex flex-col'}>
