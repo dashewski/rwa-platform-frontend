@@ -53,6 +53,8 @@ function parseRwaInput(input: string): bigint {
   }
 }
 
+// usdtWei is the amount to invest (goes into the pool); the entry fee is charged on top of it.
+// RWA tokens are whole units, so this returns the most tokens whose cost does not exceed usdtWei.
 function computeRwaFromUsdt(usdtWei: bigint, pool: AnyPool): { rwaWei: bigint; fee: bigint } {
   try {
     if (!usdtWei || usdtWei === ZERO) return { rwaWei: ZERO, fee: ZERO };
@@ -65,14 +67,15 @@ function computeRwaFromUsdt(usdtWei: bigint, pool: AnyPool): { rwaWei: bigint; f
     const effectiveHold = virtualHold + realHold;
     const k = effectiveHold * virtualRwa;
 
-    // holdAmountWithFee = holdAmount * (10000 + fee) / 10000
-    // → holdAmount = usdtWei * 10000 / (10000 + fee)
+    // holdAmountWithFee = holdAmount + holdAmount * fee / 10000, with holdAmount = usdtWei
     const bp = BigInt(10000);
-    const holdAmount = (usdtWei * bp) / (bp + entryFee);
-    const fee = usdtWei - holdAmount;
+    const one = BigInt(1);
+    const holdAmount = usdtWei;
+    const fee = (holdAmount * entryFee) / bp;
 
     const newHoldReserve = effectiveHold + holdAmount;
-    const newRwaReserve = k / newHoldReserve;
+    // Round the remaining reserve up so the tokens bought never cost more than the amount entered
+    const newRwaReserve = (k + newHoldReserve - one) / newHoldReserve;
     let rwaWei = virtualRwa > newRwaReserve ? virtualRwa - newRwaReserve : ZERO;
 
     // Fixed-sell pools cap the total RWA that can ever be minted — clamp to
@@ -90,8 +93,8 @@ function computeRwaFromUsdt(usdtWei: bigint, pool: AnyPool): { rwaWei: bigint; f
   }
 }
 
-// Most USDT (fee included) a buy can spend before a fixed-sell pool runs out of
-// RWA. Returns null when the pool has no such cap (flexible pools).
+// Most USDT (without the fee, which is charged on top) a buy can invest before a fixed-sell
+// pool runs out of RWA. Returns null when the pool has no such cap (flexible pools).
 function computeMaxBuyUsdt(pool: AnyPool): bigint | null {
   try {
     if (!pool?.fixedSell) return null;
@@ -103,23 +106,20 @@ function computeMaxBuyUsdt(pool: AnyPool): bigint | null {
     const virtualHold = BigInt(pool?.virtualHoldReserve || '0');
     const realHold = BigInt(pool?.realHoldReserve || '0');
     const virtualRwa = BigInt(pool?.virtualRwaReserve || '0');
-    const entryFee = BigInt(pool?.entryFeePercent || '100');
     if (!virtualHold || !virtualRwa || remainingRwa >= virtualRwa) return null;
 
     const effectiveHold = virtualHold + realHold;
     const k = effectiveHold * virtualRwa;
     const one = BigInt(1);
-    const bp = BigInt(10000);
 
     // Round every step up so the capped amount still buys the last token
     const newRwaReserve = virtualRwa - remainingRwa;
     const newHoldReserve = (k + newRwaReserve - one) / newRwaReserve;
     const holdAmount = newHoldReserve - effectiveHold;
-    const withFee = holdAmount + (holdAmount * entryFee + bp - one) / bp;
 
     // The input shows 4 decimals — round up to that precision too
     const unit = BigInt(10) ** BigInt(HOLD_DECIMALS - 4);
-    return ((withFee + unit - one) / unit) * unit;
+    return ((holdAmount + unit - one) / unit) * unit;
   } catch {
     return null;
   }
@@ -234,9 +234,9 @@ const BuyTokenWidget: FC<BuyTokenWidgetProps> = ({ pool, buyDisabledReason, sell
 
   const { receiveAmt, feeWei, profitWei } = useMemo(() => {
     if (mode === 'buy') {
+      // The entered amount is what gets invested; the fee is charged on top of it
       const { rwaWei, fee } = computeRwaFromUsdt(inputWei, pool);
-      const holdAmount = inputWei > fee ? inputWei - fee : ZERO;
-      const profit = (holdAmount * rewardPercent) / BigInt(10000);
+      const profit = (inputWei * rewardPercent) / BigInt(10000);
       return { receiveAmt: rwaWei, feeWei: fee, profitWei: profit };
     } else {
       const { usdtWei, fee } = computeUsdtFromRwa(inputWei, pool);
@@ -247,13 +247,37 @@ const BuyTokenWidget: FC<BuyTokenWidgetProps> = ({ pool, buyDisabledReason, sell
   const usdtBalanceBig = usdtBalance as bigint | undefined;
   const rwaBalanceBig = rwaBalance as bigint | undefined;
 
-  // Buy amount is limited by the wallet balance and by what a fixed pool has left to sell
+  // Exact cost of the tokens being bought, straight from the pool contract: [holdAmountWithFee, fee, actualRwaAmount].
+  // Until it arrives (or if it reverts) the rows below fall back to the local estimate.
+  const { data: mintQuoteRaw } = useReadContract({
+    address: poolAddress,
+    abi: POOL_ABI,
+    functionName: 'estimateMint',
+    args: [mode === 'buy' ? receiveAmt : ZERO, true],
+    query: { enabled: mode === 'buy' && receiveAmt > ZERO && !!poolAddress },
+  });
+  const mintQuote = mode === 'buy' && receiveAmt > ZERO ? (mintQuoteRaw as [bigint, bigint, bigint] | undefined) : undefined;
+  const totalPayWei = mintQuote ? mintQuote[0] : inputWei + feeWei;
+  const shownFeeWei = mintQuote ? mintQuote[1] : feeWei;
+  const shownInvestWei = mintQuote ? mintQuote[0] - mintQuote[1] : inputWei;
+  const shownProfitWei = (shownInvestWei * rewardPercent) / BigInt(10000);
+
+  // Amount to invest is limited by the wallet balance (which must also cover the fee on top, so
+  // the largest amount is balance / (1 + fee), rounded down to the 4 decimals the input shows)
+  // and by what a fixed pool has left to sell
+  const maxInvestFromBalance = useMemo(() => {
+    if (usdtBalanceBig === undefined) return undefined;
+    const bp = BigInt(10000);
+    const unit = BigInt(10) ** BigInt(HOLD_DECIMALS - 4);
+    return (((usdtBalanceBig * bp) / (bp + entryFeePercent)) / unit) * unit;
+  }, [usdtBalanceBig, entryFeePercent]);
+
   const maxBuyWei = useMemo(() => {
     const poolCap = computeMaxBuyUsdt(pool);
-    if (poolCap === null) return usdtBalanceBig;
-    if (usdtBalanceBig === undefined) return poolCap;
-    return poolCap < usdtBalanceBig ? poolCap : usdtBalanceBig;
-  }, [pool, usdtBalanceBig]);
+    if (poolCap === null) return maxInvestFromBalance;
+    if (maxInvestFromBalance === undefined) return poolCap;
+    return poolCap < maxInvestFromBalance ? poolCap : maxInvestFromBalance;
+  }, [pool, maxInvestFromBalance]);
 
   // Percent shown/dragged on the slider. Kept as its own state (rather than purely
   // derived from inputWei) so the thumb tracks the pointer 1:1 while dragging, the
@@ -341,6 +365,11 @@ const BuyTokenWidget: FC<BuyTokenWidgetProps> = ({ pool, buyDisabledReason, sell
         })) as [bigint, bigint, bigint];
         rwaWei = actualRwaAmount;
         maxHold = holdAmountWithFee + (holdAmountWithFee * SLIPPAGE_BPS) / BigInt(10000);
+        // The fee comes on top of the entered amount, so the wallet must cover amount + fee
+        if (usdtBalanceBig !== undefined && usdtBalanceBig < holdAmountWithFee) {
+          toast(`Not enough USDT: this purchase costs ${formatUsdtAmount(holdAmountWithFee)} USDT including the fee`, 'error');
+          return;
+        }
       } catch (estErr) {
         console.error('estimateMint reverted', estErr);
         const reason = estErr instanceof BaseError ? estErr.shortMessage : 'This amount is unavailable';
@@ -487,7 +516,7 @@ const BuyTokenWidget: FC<BuyTokenWidgetProps> = ({ pool, buyDisabledReason, sell
 
       {/* Input */}
       <div className='flex flex-col gap-1.5'>
-        <label className='text-sm text-grey-dark'>{mode === 'buy' ? 'USDT pay' : `${tokenSymbol} sell`}</label>
+        <label className='text-sm text-grey-dark'>{mode === 'buy' ? 'USDT to invest' : `${tokenSymbol} sell`}</label>
         <input
           type='number'
           min='0'
@@ -586,7 +615,7 @@ const BuyTokenWidget: FC<BuyTokenWidgetProps> = ({ pool, buyDisabledReason, sell
             Potential profit ({profitDisplayPct}%)
             <InfoIcon />
           </span>
-          <span className='text-sm text-grey-dark'>~ {formatUsdtAmount(profitWei)} USDT</span>
+          <span className='text-sm text-grey-dark'>~ {formatUsdtAmount(mode === 'buy' ? shownProfitWei : profitWei)} USDT</span>
         </div>
       )}
 
@@ -596,8 +625,19 @@ const BuyTokenWidget: FC<BuyTokenWidgetProps> = ({ pool, buyDisabledReason, sell
           Fee ({feeDisplayPct}%)
           <InfoIcon />
         </span>
-        <span className='text-sm text-grey-dark'>~ {formatUsdtAmount(feeWei)} USDT</span>
+        <span className='text-sm text-grey-dark'>~ {formatUsdtAmount(mode === 'buy' ? shownFeeWei : feeWei)} USDT</span>
       </div>
+
+      {/* Total to pay (buy only): the invested amount plus the fee on top, exact once the contract quote arrives */}
+      {mode === 'buy' && (
+        <div className='flex items-center justify-between py-3 border-t border-stroke-primary'>
+          <span className='text-sm font-semibold text-[#1D1D1F]'>Total to pay</span>
+          <span className='text-sm font-semibold text-[#1D1D1F]'>
+            {mintQuote ? '' : '~ '}
+            {formatUsdtAmount(totalPayWei)} USDT
+          </span>
+        </div>
+      )}
 
 
       {/* Action button */}
