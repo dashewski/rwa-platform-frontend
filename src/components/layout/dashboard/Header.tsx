@@ -104,9 +104,6 @@ const Header: FC = () => {
                       <Link className={'px-3 py-1.5'} href={'/rwa-platform-frontend/public'}>
                         Tranches
                       </Link>
-                      <Link className={'px-3 py-1.5'} href={'/dao/'}>
-                        DAO
-                      </Link>
                       <button
                         className={
                           'cursor-pointer flex items-center justify-between gap-2 py-2.5 pl-3 pr-2 mt-2 text-red-bright border-t-1 border-stroke-primary'
