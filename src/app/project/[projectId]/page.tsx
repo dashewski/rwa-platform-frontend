@@ -37,6 +37,7 @@ import { CountryChip, Modal, ShareMenu, SocialLinksRow } from '@/components/comm
 import { PoolsSection } from '@/components/pool';
 import { BusinessType } from '@/gql/graphql';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
+import { zeroAddress } from 'viem';
 import { useAuth } from '@/lib/auth/AuthContext';
 
 // Fee validated against backend test: tests/rwa_fast_tests/business-deployment.test.ts uses '100'
@@ -124,24 +125,18 @@ const ProjectPage: FC = () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const deployInfo = (deployInfoData as any)?.getBusiness;
 
-  const deployedFlagKey = `project-deploy-confirmed:${projectId}`;
-
-  // Remember that the project is on-chain (also across reloads) while the platform catches up
-  const markChainDeployed = () => {
-    chainDeployedThisSessionRef.current = true;
+  // The project is on-chain but the platform hasn't registered it yet. `announce` is for a deploy
+  // finished in this session, so the user also gets the success toast once the platform catches up.
+  const markChainDeployed = (announce = false) => {
+    if (announce) chainDeployedThisSessionRef.current = true;
     setChainDeployed(true);
-    try {
-      localStorage.setItem(deployedFlagKey, '1');
-    } catch {
-      // storage unavailable — the flag just won't survive a reload
-    }
   };
 
   // The tx being mined isn't enough: the project counts as deployed on the platform only once
   // the backend exposes tokenAddress. A reverted tx means nothing was deployed.
   useEffect(() => {
     if (!deployReceipt || deployStatus !== 'waiting-confirmation') return;
-    if (deployReceipt.status === 'success') markChainDeployed();
+    if (deployReceipt.status === 'success') markChainDeployed(true);
     else toast('Deploy transaction failed', 'error');
     setDeployTxHash(undefined);
     setDeployStatus('idle');
@@ -149,31 +144,42 @@ const ProjectPage: FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deployReceipt, deployStatus]);
 
-  // After a reload: the deploy was confirmed earlier but the platform hadn't caught up yet
+  // Ask the chain whether this project is already deployed — however and whenever that happened
+  // (earlier session, another device or team member, older version of this page). The factory checks
+  // 'RWA already deployed' before it looks at signatures, so a dry-run deployRWA with dummy
+  // signatures reverts with that reason exactly for deployed projects (anything else, e.g.
+  // 'Insufficient signatures', means it is not deployed). One eth_call, no wallet or gas needed.
   useEffect(() => {
-    try {
-      if (localStorage.getItem(deployedFlagKey) === '1') setChainDeployed(true);
-    } catch {
-      // storage unavailable
-    }
-  }, [deployedFlagKey]);
+    if (!publicClient || !projectId || deployInfoLoading || !deployInfo || deployInfo.tokenAddress || chainDeployed) return;
+    let cancelled = false;
+    publicClient
+      .simulateContract({
+        address: FACTORY_ADDRESS,
+        abi: FACTORY_ABI,
+        functionName: 'deployRWA',
+        args: [BigInt(CREATE_RWA_FEE), projectId, projectId, 'company', zeroAddress, [], [], BigInt(Math.floor(Date.now() / 1000) + 3600)],
+        account: walletAddress ?? zeroAddress,
+      })
+      .catch(err => {
+        if (!cancelled && isAlreadyDeployedError(err)) markChainDeployed();
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicClient, projectId, deployInfoLoading, deployInfo?.tokenAddress, chainDeployed, walletAddress]);
 
   // Keep asking until the backend reports tokenAddress; then the waiting note disappears and Add pool opens
   useEffect(() => {
     if (!chainDeployed) return;
     if (deployInfo?.tokenAddress) {
       setChainDeployed(false);
-      try {
-        localStorage.removeItem(deployedFlagKey);
-      } catch {
-        // storage unavailable
-      }
       if (chainDeployedThisSessionRef.current) toast('Project successfully deployed!');
       return;
     }
     const id = setInterval(() => refetchDeployInfo(), 5000);
     return () => clearInterval(id);
-  }, [chainDeployed, deployInfo?.tokenAddress, deployedFlagKey, refetchDeployInfo]);
+  }, [chainDeployed, deployInfo?.tokenAddress, refetchDeployInfo]);
 
   const pollUntilComplete = async (taskId: string, timeoutMs = 300_000) => {
     const deadline = Date.now() + timeoutMs;
