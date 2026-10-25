@@ -467,9 +467,11 @@ const ProjectPage: FC = () => {
               </div>
               <div className={'flex flex-wrap gap-2 lg:items-end lg:justify-end'}>
                 {!isDeployed && canEdit && (
-                  <div className={'flex items-center gap-3'}>
+                  // lg+: `contents` lets the button join the Update / Share row, and the status text
+                  // drops to its own right-aligned line under that row (mobile layout is unchanged)
+                  <div className={'flex items-center gap-3 lg:contents'}>
                     <Button
-                      className={chainDeployed ? '!bg-grey-light !text-grey-dark' : undefined}
+                      className={(chainDeployed ? '!bg-grey-light !text-grey-dark ' : '') + 'lg:whitespace-nowrap'}
                       visualType={'quaternary'}
                       disabled={isDeploying || chainDeployed}
                       onClick={handleDeploy}
@@ -477,10 +479,12 @@ const ProjectPage: FC = () => {
                       {isDeploying ? 'Deploying…' : 'Deploy project'}
                     </Button>
                     {isDeploying && (
-                      <span className={'text-sm text-label-tertiary'}>{DEPLOY_STATUS_LABELS[deployStatus]}</span>
+                      <span className={'text-sm text-label-tertiary lg:order-last lg:w-full lg:text-right'}>
+                        {DEPLOY_STATUS_LABELS[deployStatus]}
+                      </span>
                     )}
                     {chainDeployed && !isDeploying && (
-                      <span className={'text-sm text-label-tertiary'}>
+                      <span className={'text-sm text-label-tertiary lg:order-last lg:w-full lg:text-right'}>
                         The project is deployed on the blockchain. Waiting for confirmation on the platform…
                       </span>
                     )}
