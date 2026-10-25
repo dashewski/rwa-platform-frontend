@@ -48,8 +48,7 @@ type DeployStatus =
   | 'waiting-signatures'
   | 'approving-hold'
   | 'sending-tx'
-  | 'waiting-confirmation'
-  | 'waiting-indexing';
+  | 'waiting-confirmation';
 
 const DEPLOY_STATUS_LABELS: Record<DeployStatus, string> = {
   idle: '',
@@ -58,7 +57,6 @@ const DEPLOY_STATUS_LABELS: Record<DeployStatus, string> = {
   'approving-hold': 'Approving HOLD token spend…',
   'sending-tx': 'Sending transaction…',
   'waiting-confirmation': 'Waiting for confirmation…',
-  'waiting-indexing': 'Waiting for the backend to register the project…',
 };
 
 const ProjectPage: FC = () => {
@@ -76,6 +74,10 @@ const ProjectPage: FC = () => {
   const [deployStatus, setDeployStatus] = useState<DeployStatus>('idle');
   const [deployTxHash, setDeployTxHash] = useState<`0x${string}` | undefined>();
   const deployingRef = useRef(false);
+  // The deploy tx is confirmed on-chain, but the platform hasn't registered the project yet
+  // (no tokenAddress). Until it does, Deploy stays off — a second deploy would only revert.
+  const [chainDeployed, setChainDeployed] = useState(false);
+  const chainDeployedThisSessionRef = useRef(false);
 
   const params = useParams();
   const projectId = params.projectId as string;
@@ -109,7 +111,7 @@ const ProjectPage: FC = () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [rejectBusinessApprovalSignatures] = useMutation<any>(REJECT_BUSINESS_APPROVAL_SIGNATURES);
 
-  const { isSuccess: txConfirmed } = useWaitForTransactionReceipt({ hash: deployTxHash });
+  const { data: deployReceipt } = useWaitForTransactionReceipt({ hash: deployTxHash });
 
   const company = companyData?.getCompany;
   const project = businessData?.getBusiness;
@@ -122,37 +124,56 @@ const ProjectPage: FC = () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const deployInfo = (deployInfoData as any)?.getBusiness;
 
-  useEffect(() => {
-    // The tx being mined isn't enough: the project counts as deployed only once the backend
-    // has indexed it and exposes tokenAddress, so keep polling for it before unlocking pools.
-    if (txConfirmed && deployStatus === 'waiting-confirmation') {
-      setDeployStatus('waiting-indexing');
-    }
-  }, [txConfirmed, deployStatus]);
+  const deployedFlagKey = `project-deploy-confirmed:${projectId}`;
 
+  // Remember that the project is on-chain (also across reloads) while the platform catches up
+  const markChainDeployed = () => {
+    chainDeployedThisSessionRef.current = true;
+    setChainDeployed(true);
+    try {
+      localStorage.setItem(deployedFlagKey, '1');
+    } catch {
+      // storage unavailable — the flag just won't survive a reload
+    }
+  };
+
+  // The tx being mined isn't enough: the project counts as deployed on the platform only once
+  // the backend exposes tokenAddress. A reverted tx means nothing was deployed.
   useEffect(() => {
-    if (deployStatus !== 'waiting-indexing') return;
+    if (!deployReceipt || deployStatus !== 'waiting-confirmation') return;
+    if (deployReceipt.status === 'success') markChainDeployed();
+    else toast('Deploy transaction failed', 'error');
+    setDeployTxHash(undefined);
+    setDeployStatus('idle');
+    deployingRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deployReceipt, deployStatus]);
+
+  // After a reload: the deploy was confirmed earlier but the platform hadn't caught up yet
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(deployedFlagKey) === '1') setChainDeployed(true);
+    } catch {
+      // storage unavailable
+    }
+  }, [deployedFlagKey]);
+
+  // Keep asking until the backend reports tokenAddress; then the waiting note disappears and Add pool opens
+  useEffect(() => {
+    if (!chainDeployed) return;
     if (deployInfo?.tokenAddress) {
-      setDeployStatus('idle');
-      setDeployTxHash(undefined);
-      deployingRef.current = false;
-      toast('Project successfully deployed!');
+      setChainDeployed(false);
+      try {
+        localStorage.removeItem(deployedFlagKey);
+      } catch {
+        // storage unavailable
+      }
+      if (chainDeployedThisSessionRef.current) toast('Project successfully deployed!');
       return;
     }
-    const startedAt = Date.now();
-    const id = setInterval(() => {
-      if (Date.now() - startedAt > 120_000) {
-        clearInterval(id);
-        setDeployStatus('idle');
-        setDeployTxHash(undefined);
-        deployingRef.current = false;
-        toast('Transaction confirmed, but the project is not registered yet. Reload the page in a minute.', 'warning');
-        return;
-      }
-      refetchDeployInfo();
-    }, 3000);
+    const id = setInterval(() => refetchDeployInfo(), 5000);
     return () => clearInterval(id);
-  }, [deployStatus, deployInfo?.tokenAddress, refetchDeployInfo]);
+  }, [chainDeployed, deployInfo?.tokenAddress, deployedFlagKey, refetchDeployInfo]);
 
   const pollUntilComplete = async (taskId: string, timeoutMs = 300_000) => {
     const deadline = Date.now() + timeoutMs;
@@ -253,20 +274,30 @@ const ProjectPage: FC = () => {
       });
 
       setDeployStatus('sending-tx');
+      const deployArgs = [
+        BigInt(CREATE_RWA_FEE),
+        projectId,
+        ownerId,
+        ownerType,
+        walletAddress,
+        signers,
+        signatures,
+        BigInt(Math.floor(task.expired)),
+      ] as const;
+      // Dry-run first: if the project is already on-chain this fails here with the revert reason
+      // instead of sending a transaction that is bound to revert (and costs gas)
+      await publicClient.simulateContract({
+        address: FACTORY_ADDRESS,
+        abi: FACTORY_ABI,
+        functionName: 'deployRWA',
+        args: deployArgs,
+        account: walletAddress,
+      });
       const txHash = await writeContractAsync({
         address: FACTORY_ADDRESS,
         abi: FACTORY_ABI,
         functionName: 'deployRWA',
-        args: [
-          BigInt(CREATE_RWA_FEE),
-          projectId,
-          ownerId,
-          ownerType,
-          walletAddress,
-          signers,
-          signatures,
-          BigInt(Math.floor(task.expired)),
-        ],
+        args: deployArgs,
         gas: BigInt(1_200_000),
       });
 
@@ -274,10 +305,12 @@ const ProjectPage: FC = () => {
       setDeployStatus('waiting-confirmation');
     } catch (err) {
       if (isAlreadyDeployedError(err)) {
-        // Not a failure: the project is already on-chain (e.g. a second click while the UI lagged).
-        // Switch to waiting for the backend to report its address instead of showing an error.
-        toast('This project is already deployed.', 'warning');
-        setDeployStatus('waiting-indexing');
+        // Not a failure: the project is already on-chain (e.g. an earlier deploy the platform hasn't
+        // registered yet). Show the waiting note instead of an error.
+        toast('This project is already deployed on the blockchain.', 'warning');
+        markChainDeployed();
+        setDeployStatus('idle');
+        deployingRef.current = false;
         return;
       }
       const message = err instanceof Error ? err.message : 'Deploy failed';
@@ -391,6 +424,8 @@ const ProjectPage: FC = () => {
     ? undefined
     : deployInfoLoading
       ? 'Checking project deployment…'
+      : chainDeployed
+        ? 'The project is deployed on the blockchain. Waiting for confirmation on the platform.'
       : canEdit
         ? 'Deploy the project first to add pools.'
         : 'The project is not deployed yet.';
@@ -427,11 +462,21 @@ const ProjectPage: FC = () => {
               <div className={'flex flex-wrap gap-2 lg:items-end lg:justify-end'}>
                 {!isDeployed && canEdit && (
                   <div className={'flex items-center gap-3'}>
-                    <Button visualType={'quaternary'} disabled={isDeploying} onClick={handleDeploy}>
+                    <Button
+                      className={chainDeployed ? '!bg-grey-light !text-grey-dark' : undefined}
+                      visualType={'quaternary'}
+                      disabled={isDeploying || chainDeployed}
+                      onClick={handleDeploy}
+                    >
                       {isDeploying ? 'Deploying…' : 'Deploy project'}
                     </Button>
                     {isDeploying && (
                       <span className={'text-sm text-label-tertiary'}>{DEPLOY_STATUS_LABELS[deployStatus]}</span>
+                    )}
+                    {chainDeployed && !isDeploying && (
+                      <span className={'text-sm text-label-tertiary'}>
+                        The project is deployed on the blockchain. Waiting for confirmation on the platform…
+                      </span>
                     )}
                   </div>
                 )}
