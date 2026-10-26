@@ -4,7 +4,7 @@ import React, { FC, ReactNode, useMemo, useState } from 'react';
 import Link from 'next/link';
 import clsx from 'clsx';
 import { formatUnits } from 'viem';
-import { useAccount } from 'wagmi';
+import { useAccount, useReadContracts } from 'wagmi';
 import { useQuery } from '@apollo/client/react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { FreeMode } from 'swiper/modules';
@@ -30,6 +30,8 @@ import {
   GET_COMPANIES_FOR_PORTFOLIO,
 } from '@/lib/portfolio/operations';
 import { getCollectedHold } from '@/lib/pool/collected';
+import { POOL_ABI } from '@/lib/contracts';
+import { sumClaimableIncome } from '@/lib/portfolio/claimable';
 import type { TokenBalance, Pool, PoolTransaction, IncomingTranche } from '@/gql/graphql';
 
 import 'swiper/css';
@@ -177,7 +179,6 @@ function derivePortfolioData(
   unrealizedPNL: number;
   avgROI: number;
   tradingEarnings: number;
-  claimableAmount: number;
   poolStats: { active: number; completed: number; failed: number };
 } {
   const poolByAddress = new Map<string, Pool>();
@@ -207,7 +208,6 @@ function derivePortfolioData(
   let totalUnrealizedPNL = 0;
   let totalInvestedAll = 0;
   let tradingEarnings = 0;
-  let claimableAmount = 0;
 
   const industryMap = new Map<string, { value: number; count: number }>();
   const projectMap = new Map<string, { value: number; count: number }>();
@@ -296,7 +296,6 @@ function derivePortfolioData(
     totalUnrealizedPNL += unrealizedPNL;
     totalInvestedAll += totalBuyHold;
 
-    if (status === 'collecting' || status === 'paying_out') claimableAmount += currentValue;
     if (status === 'completed') poolStats.completed++;
     else if (status === 'failed') poolStats.failed++;
     else poolStats.active++;
@@ -335,7 +334,6 @@ function derivePortfolioData(
     unrealizedPNL: totalUnrealizedPNL,
     avgROI,
     tradingEarnings,
-    claimableAmount,
     poolStats,
   };
 }
@@ -534,6 +532,26 @@ const Portfolio: FC = () => {
     [balances, pools, txns, businesses, companies],
   );
 
+  // Claimable amount = the income the pools would pay out for the user's positions right now (net of fees),
+  // read from the contracts — not the value of the invested funds
+  const burnQuoteCalls = useMemo(
+    () =>
+      balances
+        .filter(b => b.poolAddress && Number.isFinite(b.balance) && b.balance >= 1)
+        .map(b => ({
+          address: b.poolAddress as `0x${string}`,
+          abi: POOL_ABI,
+          functionName: 'estimateBurn' as const,
+          args: [BigInt(Math.floor(b.balance))] as const,
+        })),
+    [balances],
+  );
+  const { data: burnQuotes } = useReadContracts({
+    contracts: burnQuoteCalls,
+    query: { enabled: burnQuoteCalls.length > 0 },
+  });
+  const claimableIncome = useMemo(() => sumClaimableIncome(burnQuotes), [burnQuotes]);
+
   const categoryOptions = useMemo<Partial<Record<FilterCategory, string[]>>>(() => ({
     'AI-Rating': ['80 — 100', '40 — 79', '0 — 39'],
     'Type': ['Fixed', 'Flexible'],
@@ -679,9 +697,9 @@ const Portfolio: FC = () => {
       icon: <Icon name="flash" className="size-5 text-black" />,
     },
     {
-      value: fmtStat(derived.claimableAmount),
+      value: fmtStat(claimableIncome),
       label: 'CLAIMABLE AMOUNT, USDT',
-      tooltip: 'The total amount of repayments from all projects that you can claim and withdraw.',
+      tooltip: 'The income from repayments that you can claim right now, after fees. The funds you invested are not included.',
       icon: <Icon name="wallet" className="size-5 text-black" />,
     },
   ];
