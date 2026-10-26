@@ -9,6 +9,7 @@ import { useConnectModal, useAccountModal } from '@rainbow-me/rainbowkit';
 import { Wrapper } from '@/components/layout';
 import { Button, ButtonLink } from '@/components/ui';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { SUPPORT_URL } from '@/lib/config';
 
 const Header: FC = () => {
   const { openConnectModal } = useConnectModal();
@@ -26,7 +27,7 @@ const Header: FC = () => {
     },
     { text: 'Testnet', link: '/testnet/' },
     { text: 'DAO', link: '/dao/' },
-    { text: 'Support', link: '#' },
+    { text: 'Support', link: SUPPORT_URL, external: true },
   ];
 
   useEffect(() => {
@@ -49,9 +50,13 @@ const Header: FC = () => {
             <ul className={'flex flex-col gap-10 items-center my-auto'}>
               {navLinks &&
                 navLinks.length > 0 &&
-                navLinks.map(({ text, link }) => (
+                navLinks.map(({ text, link, external }) => (
                   <li key={text + 'menu'}>
-                    <Link className={'text-white text-xl/[1.2] tracking-[-0.02em] font-semibold'} href={link}>
+                    <Link
+                      className={'text-white text-xl/[1.2] tracking-[-0.02em] font-semibold'}
+                      href={link}
+                      {...(external && { target: '_blank', rel: 'noopener noreferrer' })}
+                    >
                       {text}
                     </Link>
                   </li>
@@ -97,9 +102,11 @@ const Header: FC = () => {
           <ul className={'max-lg:hidden flex flex-wrap items-center gap-8'}>
             {navLinks &&
               navLinks.length > 0 &&
-              navLinks.map(({ text, link }) => (
+              navLinks.map(({ text, link, external }) => (
                 <li key={text + 'menu'}>
-                  <ButtonLink href={link}>{text}</ButtonLink>
+                  <ButtonLink href={link} {...(external && { target: '_blank', rel: 'noopener noreferrer' })}>
+                    {text}
+                  </ButtonLink>
                 </li>
               ))}
           </ul>

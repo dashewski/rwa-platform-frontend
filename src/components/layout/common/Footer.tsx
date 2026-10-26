@@ -7,6 +7,7 @@ import Link from 'next/link';
 
 import { Wrapper } from '@/components/layout';
 import { ButtonLink, Socials } from '@/components/ui';
+import { SUPPORT_URL } from '@/lib/config';
 
 const Footer: FC = () => {
   const [isNotFound, setIsNotFound] = useState(false);
@@ -41,7 +42,8 @@ const Footer: FC = () => {
     },
     {
       text: 'Support',
-      link: '#',
+      link: SUPPORT_URL,
+      external: true,
     },
     {
       text: 'Contact Us',
@@ -85,9 +87,11 @@ const Footer: FC = () => {
           >
             {links &&
               links.length > 0 &&
-              links.map(({ text, link }) => (
+              links.map(({ text, link, external }) => (
                 <li key={'footer' + text}>
-                  <ButtonLink href={link}>{text}</ButtonLink>
+                  <ButtonLink href={link} {...(external && { target: '_blank', rel: 'noopener noreferrer' })}>
+                    {text}
+                  </ButtonLink>
                 </li>
               ))}
           </ul>
