@@ -35,12 +35,16 @@ const STATUS_ICON: Record<DebtRepaymentPool['status'], 'failed' | 'time' | 'comp
   overdue: 'failed',
   upcoming: 'time',
   successful: 'completed',
+  collecting: 'time',
+  failed: 'failed',
 };
 
 const STATUS_BANNER_BG: Record<DebtRepaymentPool['status'], string> = {
   overdue: 'bg-[#f7eef5]',
   upcoming: 'bg-[#fdf3e0]',
   successful: 'bg-[#eaf7ea]',
+  collecting: 'bg-[#fdf3e0]',
+  failed: 'bg-[#f7eef5]',
 };
 
 const STATUS_DESCRIPTION: Record<DebtRepaymentPool['status'], string> = {
@@ -48,6 +52,8 @@ const STATUS_DESCRIPTION: Record<DebtRepaymentPool['status'], string> = {
     "The scheduled date has passed and you haven't sent funds back to investors. Delays affect your project's rating. Paying now will remove the overdue flag on the pool page and improve your credibility with investors",
   upcoming: "This payment isn't due yet. Paying it early builds trust with your investors ahead of the payout date.",
   successful: 'This tranche has been fully repaid. No further action is needed.',
+  collecting: "The pool hasn't reached its funding goal yet. Repayments open once the goal is reached.",
+  failed: "The pool didn't reach its funding goal, so there is nothing to repay.",
 };
 
 interface DebtRepaymentDrawerProps {

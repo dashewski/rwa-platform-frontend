@@ -2,7 +2,8 @@ import React, { FC } from 'react';
 import Link from 'next/link';
 import { Icon } from '@/components/ui';
 
-export type DebtRepaymentStatus = 'overdue' | 'upcoming' | 'successful';
+// collecting / failed: the pool hasn't reached its goal, so there is no repayment to make (yet)
+export type DebtRepaymentStatus = 'overdue' | 'upcoming' | 'successful' | 'collecting' | 'failed';
 
 export interface DebtRepaymentPool {
   id: string;
@@ -22,12 +23,16 @@ export const STATUS_LABELS: Record<DebtRepaymentStatus, string> = {
   overdue: 'Overdue',
   upcoming: 'Upcoming',
   successful: 'Successful',
+  collecting: 'Collecting',
+  failed: 'Failed',
 };
 
 const STATUS_ICON: Record<DebtRepaymentStatus, 'failed' | 'time' | 'completed'> = {
   overdue: 'failed',
   upcoming: 'time',
   successful: 'completed',
+  collecting: 'time',
+  failed: 'failed',
 };
 
 function formatDate(ts: number): string {

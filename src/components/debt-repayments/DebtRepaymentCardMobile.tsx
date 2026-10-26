@@ -7,6 +7,8 @@ const STATUS_ICON: Record<DebtRepaymentPool['status'], 'failed' | 'time' | 'comp
   overdue: 'failed',
   upcoming: 'time',
   successful: 'completed',
+  collecting: 'time',
+  failed: 'failed',
 };
 
 function formatDate(ts: number): string {
