@@ -20,6 +20,14 @@ const Header: FC = () => {
   const { openConnectModal } = useConnectModal();
   const pathname = usePathname();
 
+  // Open mobile menu = the page underneath must not scroll (the header scrolls with it, so the burger would slide away).
+  // Locked on <html>: it has its own overflow-x rule, so an overflow set on <body> never reaches the viewport.
+  useEffect(() => {
+    document.documentElement.classList.toggle('locked', isMenuOpened);
+
+    return () => document.documentElement.classList.remove('locked');
+  }, [isMenuOpened]);
+
   const navLinkClassName = (href: string) => {
     const isActive = pathname === href || `${pathname}/` === href;
 
