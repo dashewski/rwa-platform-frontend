@@ -23,6 +23,7 @@ import {
   GET_COMPANIES_FOR_DEBT_REPAYMENTS,
   GET_DEBT_REPAYMENT_TRANSACTIONS,
 } from '@/lib/debt-repayments/operations';
+import { getPoolStatus } from '@/lib/pool/status';
 import type { Pool, Business, Company, Transaction } from '@/gql/graphql';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -60,11 +61,18 @@ function deriveDebtRepaymentRow(
   const total = incoming.length;
   const nextTranche = completed < total ? incoming[completed] : undefined;
 
-  const status: DebtRepaymentStatus = !nextTranche
-    ? 'successful'
-    : nextTranche.expiredAt < now
-      ? 'overdue'
-      : 'upcoming';
+  // Repayments only exist once the pool has reached its goal; before that (or if it never does)
+  // there is nothing to pay, whatever the tranche dates say
+  const funded = pool.isTargetReached;
+  const status: DebtRepaymentStatus = !funded
+    ? getPoolStatus(pool, now) === 'Failed'
+      ? 'failed'
+      : 'collecting'
+    : !nextTranche
+      ? 'successful'
+      : nextTranche.expiredAt < now
+        ? 'overdue'
+        : 'upcoming';
 
   const amountDueWei = nextTranche
     ? BigInt(nextTranche.amount) - BigInt(nextTranche.returnedAmount || '0')
@@ -85,7 +93,7 @@ function deriveDebtRepaymentRow(
     completedTranches: completed,
     totalTranches: total,
     paymentAmount: nextTranche ? tranchePayable(nextTranche) : null,
-    payable: !!nextTranche,
+    payable: funded && !!nextTranche,
   };
 
   return { row, amountDueWei, percentOfDebt };
@@ -172,6 +180,7 @@ const DebtRepaymentsPage: FC = () => {
 
   const derivedRows = useMemo(() => {
     return pools
+      .filter(pool => !!pool.poolAddress) // a pool that isn't deployed yet has no repayment schedule
       .map(pool => {
         const business = pool.businessId ? businessById.get(pool.businessId) : undefined;
         const companyName =
@@ -188,7 +197,7 @@ const DebtRepaymentsPage: FC = () => {
   }, [pools, businessById, companyById]);
 
   const totalDueUsdt = useMemo(
-    () => derivedRows.reduce((sum, { row }) => sum + (row.paymentAmount ?? 0), 0),
+    () => derivedRows.reduce((sum, { row }) => sum + (row.payable ? row.paymentAmount ?? 0 : 0), 0),
     [derivedRows]
   );
 

@@ -14,6 +14,11 @@ export const GET_POOLS_FOR_DEBT_REPAYMENTS = gql`
       realHoldReserve
       virtualRwaReserve
       exitFeePercent
+      paused
+      isTargetReached
+      isFullyReturned
+      entryPeriodStart
+      entryPeriodExpired
       incomingTranches {
         amount
         expiredAt
