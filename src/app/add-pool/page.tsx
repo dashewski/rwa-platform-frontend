@@ -556,16 +556,6 @@ const AddPoolContent: FC = () => {
         <Wrapper>
           <div className="border-b border-stroke-primary pb-6 flex justify-between items-center max-md:flex-wrap max-md:gap-3">
             <Title size="xs">New pool</Title>
-            <div className="flex items-center gap-3">
-              <Button
-                visualType="quaternary"
-                type="button"
-                onClick={handleCreateClick}
-                disabled={isCreating || projectNotDeployed || businessDeployLoading}
-              >
-                {isCreating ? 'Creating…' : 'Create pool'}
-              </Button>
-            </div>
           </div>
         </Wrapper>
       </section>
@@ -935,6 +925,18 @@ const AddPoolContent: FC = () => {
             </div>
           </section>
 
+          {/* Submit — at the end of the form, after everything that has to be filled in */}
+          <div className="flex justify-end">
+            <Button
+              className="max-md:w-full"
+              visualType="quaternary"
+              type="button"
+              onClick={handleCreateClick}
+              disabled={isCreating || projectNotDeployed || businessDeployLoading}
+            >
+              {isCreating ? 'Creating…' : 'Create pool'}
+            </Button>
+          </div>
         </div>
       </Wrapper>
       <ConfirmModal
