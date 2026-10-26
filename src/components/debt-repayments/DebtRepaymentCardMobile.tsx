@@ -24,7 +24,7 @@ interface DebtRepaymentCardMobileProps {
 
 const DebtRepaymentCardMobile: FC<DebtRepaymentCardMobileProps> = ({ pool, onPay }) => {
   return (
-    <div className="bg-bg-tertiary rounded-xl flex flex-col gap-4 items-start w-full pt-4 pb-4">
+    <div className="relative bg-bg-tertiary rounded-xl flex flex-col gap-4 items-start w-full pt-4 pb-4">
       <div className="flex items-center justify-between px-3 w-full">
         <div className="bg-white flex items-center gap-1.5 justify-center pl-2 pr-3 py-2 rounded-full">
           <Icon name={STATUS_ICON[pool.status]} className="size-4" />
@@ -37,13 +37,14 @@ const DebtRepaymentCardMobile: FC<DebtRepaymentCardMobileProps> = ({ pool, onPay
           {pool.paymentAmount !== null ? pool.paymentAmount.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}{' '}
           USDT
         </p>
-        <Link href={`/pool/${pool.id}`} className="text-base leading-[1.2] text-black w-full truncate hover:underline">
+        {/* The link's ::after covers the whole card; Pay and the link below sit above it (z-10) */}
+        <Link href={`/pool/${pool.id}`} className="text-base leading-[1.2] text-black w-full truncate hover:underline after:absolute after:inset-0">
           {pool.name}
         </Link>
       </div>
 
       {pool.payable && (
-        <div className="px-3 w-full">
+        <div className="relative z-10 px-3 w-full">
           <Button visualType="quaternary" className="w-full justify-center" onClick={() => onPay(pool)}>
             Pay
           </Button>
@@ -68,7 +69,7 @@ const DebtRepaymentCardMobile: FC<DebtRepaymentCardMobileProps> = ({ pool, onPay
 
       <Link
         href={`/pool/${pool.id}`}
-        className="flex items-center justify-center gap-1 px-3 pt-1 w-full text-sm text-blue"
+        className="relative z-10 flex items-center justify-center gap-1 px-3 pt-1 w-full text-sm text-blue"
       >
         To payment page
         <Icon name="arrowUp" className="size-4 rotate-90" />

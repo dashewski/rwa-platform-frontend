@@ -105,8 +105,9 @@ const WithdrawalsPoolRow: FC<WithdrawalsPoolRowProps> = ({ pool, showCompany, sh
         {showCompany && <p className={'text-base font-semibold text-black px-1 pt-3'}>{pool.companyName}</p>}
         {showProject && <p className={'text-xs text-label-tertiary uppercase px-1 pb-2'}>{pool.projectName}</p>}
 
-        <div className={'bg-bg-tertiary rounded-2xl p-4 flex flex-col gap-3'}>
-          <Link href={`/pool/${pool.id}`} className={'text-base font-bold text-black flex items-center gap-1.5 hover:underline'}>
+        {/* The link's ::after covers the whole card; Withdraw and the status tooltip sit above it (z-10) */}
+        <div className={'relative bg-bg-tertiary rounded-2xl p-4 flex flex-col gap-3'}>
+          <Link href={`/pool/${pool.id}`} className={'text-base font-bold text-black flex items-center gap-1.5 hover:underline after:absolute after:inset-0'}>
             {pool.status === 'already_withdrawn' && <Icon name={'check'} className={'size-3.5 shrink-0'} />}
             {pool.name}
           </Link>
@@ -119,14 +120,14 @@ const WithdrawalsPoolRow: FC<WithdrawalsPoolRowProps> = ({ pool, showCompany, sh
             <span className={clsx('text-sm', pool.status === 'failed' ? 'text-red-bright' : 'text-grey-dark')}>
               {pool.collected.toLocaleString()} / {pool.goal.toLocaleString()}
             </span>
-            <span className={clsx('flex items-center gap-1 text-sm whitespace-nowrap', STATUS_TEXT_COLOR[pool.status])}>
+            <span className={clsx('relative z-10 flex items-center gap-1 text-sm whitespace-nowrap', STATUS_TEXT_COLOR[pool.status])}>
               {STATUS_LABELS[pool.status]}
               <Tooltip content={STATUS_TOOLTIPS[pool.status]} />
             </span>
           </div>
 
           {pool.status === 'ready_to_withdraw' && (
-            <Button visualType={'quaternary'} className={'w-full justify-center'} onClick={() => onWithdraw(pool)}>
+            <Button visualType={'quaternary'} className={'relative z-10 w-full justify-center'} onClick={() => onWithdraw(pool)}>
               Withdraw
             </Button>
           )}
