@@ -11,6 +11,7 @@ import { Wrapper } from '@/components/layout';
 
 import { Button, Icon } from '@/components/ui';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { SUPPORT_URL } from '@/lib/config';
 
 const Header: FC = () => {
   const [isMenuOpened, setIsMenuOpened] = useState(false);
@@ -101,7 +102,7 @@ const Header: FC = () => {
                     )}
                   >
                     <div className={'flex flex-col gap-0.5 text-sm font-regular'}>
-                      <Link className={'px-3 py-1.5'} href={'/rwa-platform-frontend/public'}>
+                      <Link className={'px-3 py-1.5'} href={'/debt-repayments/'}>
                         Tranches
                       </Link>
                       <button
@@ -187,10 +188,10 @@ const Header: FC = () => {
             )}
             {!isLoading && isAuthenticated && (
               <>
-                <Link className={'py-2.5 text-base'} href={'/my-companies'}>
+                <Link className={'py-2.5 text-base'} href={'/debt-repayments/'}>
                   Tranches
                 </Link>
-                <Link className={'py-2.5 text-base'} href={'/my-companies'}>
+                <Link className={'py-2.5 text-base'} href={SUPPORT_URL} target={'_blank'} rel={'noopener noreferrer'}>
                   Contact support
                 </Link>
                 <Link className={'py-2.5 text-base'} href={'/dao'}>
