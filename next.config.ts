@@ -1,5 +1,7 @@
 import type { NextConfig } from 'next';
 
+const apiProxyTarget = process.env.API_PROXY_TARGET;
+
 const nextConfig: NextConfig = {
   distDir: 'build',
   images: {
@@ -20,6 +22,22 @@ const nextConfig: NextConfig = {
         as: '*.js',
       },
     },
+  },
+  async rewrites() {
+    if (!apiProxyTarget) {
+      return [];
+    }
+
+    return [
+      {
+        source: '/gateway/:path*',
+        destination: `${apiProxyTarget}/gateway/:path*`,
+      },
+      {
+        source: '/api/:path*',
+        destination: `${apiProxyTarget}/api/:path*`,
+      },
+    ];
   },
 };
 
