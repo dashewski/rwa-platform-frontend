@@ -1,9 +1,9 @@
 export const GRAPHQL_ENDPOINT =
-  process.env.NEXT_PUBLIC_GRAPHQL_ENDPOINT || 'http://localhost:443/gateway/graphql';
+  process.env.NEXT_PUBLIC_GRAPHQL_ENDPOINT ?? '/gateway/graphql';
 
-export const SSE_ENDPOINT = GRAPHQL_ENDPOINT + '/stream';
+export const SSE_ENDPOINT = `${GRAPHQL_ENDPOINT}/stream`;
 
-export const API_ENDPOINT = process.env.NEXT_PUBLIC_API_ENDPOINT ?? 'http://localhost:443';
+export const API_ENDPOINT = process.env.NEXT_PUBLIC_API_ENDPOINT ?? '/gateway';
 
 // Support chat (opened in a new tab from the menus)
 export const SUPPORT_URL = 'https://t.me/slices_support';

@@ -2,7 +2,7 @@ import { gql } from '@apollo/client';
 import { TypedDocumentNode } from '@graphql-typed-document-node/core';
 import { ParentTypes } from '@/gql/graphql';
 import { API_ENDPOINT } from '@/lib/config';
-import { clearSession, getAccessToken } from '@/lib/auth/tokenManager';
+import { notifySessionExpired } from '@/lib/auth/session';
 
 export interface DocumentItem {
   id: string;
@@ -144,8 +144,6 @@ export const uploadDocumentMultipart = async (
   name: string,
   file: File
 ): Promise<DocumentItem> => {
-  const token = await getAccessToken();
-
   const formData = new FormData();
   formData.append('file', file);
   formData.append('folderId', folderId);
@@ -153,11 +151,11 @@ export const uploadDocumentMultipart = async (
 
   const response = await fetch(`${API_ENDPOINT}/api/documents/createDocument`, {
     method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: 'include',
     body: formData,
   });
 
-  if (response.status === 401) clearSession();
+  if (response.status === 401) notifySessionExpired();
 
   if (!response.ok) {
     const text = await response.text();

@@ -1,20 +1,25 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
-import { useAccount, useDisconnect, useConnections, useWalletClient } from 'wagmi';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { useAccount, useDisconnect, useWalletClient } from 'wagmi';
 import { signTypedData } from 'viem/actions';
-import { authService } from './authService';
-import { AUTH_SESSION_EXPIRED_EVENT, clearTokens, currentUser, getAccessToken } from './tokenManager';
-import { User } from '@/gql/graphql';
 import { useRouter } from 'next/navigation';
+import { authService } from './authService';
+import { getSession, SESSION_EXPIRED_EVENT, type Session } from './session';
 import { toast } from '@/components/ui/Toast';
+
+interface AuthUser {
+  userId: string;
+  wallet: string;
+}
 
 interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
-  user: User | null;
+  user: AuthUser | null;
   login: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  logoutAll: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -22,7 +27,8 @@ const AuthContext = createContext<AuthContextType>({
   isLoading: true,
   user: null,
   login: async () => {},
-  logout: () => {},
+  logout: async () => {},
+  logoutAll: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -32,14 +38,13 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [user, setUser] = useState<User | null>(null);
-  const { address, isConnected, chainId } = useAccount();
+  const { address } = useAccount();
   const { disconnect } = useDisconnect();
   const { data: walletClient } = useWalletClient();
-  const connections = useConnections();
   const router = useRouter();
+  const loginAttempted = useRef(false);
 
   const login = useCallback(async () => {
     if (!address) {
@@ -61,19 +66,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         message: typedData.message,
       });
 
-      const tokens = await authService.authenticate({
+      const next = await authService.login({
         wallet: address,
         signature,
         timestamp: typedData.message.timestamp,
       });
 
-      setIsAuthenticated(true);
-      setUser({
-        userId: tokens.userId,
-        wallet: tokens.wallet,
-        createdAt: 0, // We don't have this info from the tokens
-        updatedAt: 0, // We don't have this info from the tokens
-      });
+      setSession(next);
 
       toast('Signed in successfully!');
       router.push('/portfolio/');
@@ -83,71 +82,88 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [address, walletClient, chainId, isConnected, connections]);
+  }, [address, walletClient, router]);
 
   useEffect(() => {
-    const checkAuth = async () => {
-      if (!address) {
-        setIsAuthenticated(false);
-        setUser(null);
-        setIsLoading(false);
+    let cancelled = false;
+
+    const restore = async () => {
+      setIsLoading(true);
+
+      const current = await getSession();
+
+      if (cancelled) {
         return;
       }
 
-      // Returns a valid access token, refreshing it beforehand if it is expiring
-      const token = await getAccessToken();
+      setSession(current);
 
-      if (token) {
-        setIsAuthenticated(true);
-        const identity = currentUser();
-        setUser(
-          identity
-            ? { userId: identity.userId, wallet: identity.wallet, createdAt: 0, updatedAt: 0 }
-            : null
-        );
-        setIsLoading(false);
-        return;
+      if (!current && address && walletClient && !loginAttempted.current) {
+        loginAttempted.current = true;
+
+        try {
+          await login();
+        } catch {
+          // the toast is already shown by login()
+        }
       }
 
-      setIsAuthenticated(false);
-      setUser(null);
-      setIsLoading(false);
-
-      if (walletClient) {
-        login();
+      if (!cancelled) {
+        setIsLoading(false);
       }
     };
 
-    checkAuth();
+    restore();
+
+    return () => {
+      cancelled = true;
+    };
   }, [address, walletClient, login]);
 
   useEffect(() => {
     const handleSessionExpired = () => {
-      setIsAuthenticated(false);
-      setUser(null);
+      setSession(null);
       toast('Session expired. Please sign in again.', 'error');
       router.push('/');
     };
 
-    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
-    return () => window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
   }, [router]);
 
-  const logout = () => {
-    clearTokens();
+  const logout = useCallback(async () => {
+    try {
+      await authService.logout();
+    } catch {
+      // the session is gone either way
+    }
+
+    setSession(null);
     disconnect();
-    setIsAuthenticated(false);
-    setUser(null);
     toast('Signed out successfully.');
     router.push('/');
-  };
+  }, [disconnect, router]);
+
+  const logoutAll = useCallback(async () => {
+    try {
+      await authService.logoutAll();
+    } catch {
+      // the session is gone either way
+    }
+
+    setSession(null);
+    disconnect();
+    toast('Signed out on all devices.');
+    router.push('/');
+  }, [disconnect, router]);
 
   const value = {
-    isAuthenticated,
+    isAuthenticated: session !== null,
     isLoading,
-    user,
+    user: session ? { userId: session.userId, wallet: session.wallet } : null,
     login,
     logout,
+    logoutAll,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

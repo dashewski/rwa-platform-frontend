@@ -1,8 +1,7 @@
 import { ApolloClient, InMemoryCache, HttpLink, ApolloLink, CombinedGraphQLErrors } from '@apollo/client';
-import { SetContextLink } from '@apollo/client/link/context';
 import { ErrorLink } from '@apollo/client/link/error';
 import { GRAPHQL_ENDPOINT } from '../config';
-import { clearSession, getAccessToken } from '../auth/tokenManager';
+import { notifySessionExpired } from '../auth/session';
 
 declare module '@apollo/client' {
   namespace ApolloClient {
@@ -22,29 +21,19 @@ declare module '@apollo/client' {
   }
 }
 
-const httpLink = new HttpLink({ uri: GRAPHQL_ENDPOINT });
-
-const authLink = new SetContextLink(async (prevContext) => {
-  const accessToken = await getAccessToken();
-  return {
-    headers: {
-      ...prevContext['headers'],
-      Authorization: accessToken ? `Bearer ${accessToken}` : '',
-    },
-  };
-});
+const httpLink = new HttpLink({ uri: GRAPHQL_ENDPOINT, credentials: 'include' });
 
 const errorLink = new ErrorLink(({ error }) => {
   if (
     CombinedGraphQLErrors.is(error) &&
     error.errors.some((e) => e.message === 'Authentication required')
   ) {
-    clearSession();
+    notifySessionExpired();
   }
 });
 
 export const apolloClient = new ApolloClient({
-  link: ApolloLink.from([errorLink, authLink, httpLink]),
+  link: ApolloLink.from([errorLink, httpLink]),
   cache: new InMemoryCache(),
   defaultOptions: {
     watchQuery: {

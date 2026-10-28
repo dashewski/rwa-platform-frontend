@@ -33,10 +33,6 @@ const nextConfig: NextConfig = {
         source: '/gateway/:path*',
         destination: `${apiProxyTarget}/gateway/:path*`,
       },
-      {
-        source: '/api/:path*',
-        destination: `${apiProxyTarget}/api/:path*`,
-      },
     ];
   },
 };

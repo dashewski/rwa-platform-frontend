@@ -1,13 +1,6 @@
 import { apolloClient } from '../apollo/client';
-import { AUTHENTICATE, REVOKE_TOKENS } from './operations';
-import {
-  AuthenticateInput,
-  AuthenticateMutation,
-  AuthTokens,
-  RevokeTokensInput,
-  RevokeTokensMutation,
-} from '@/gql/graphql';
-import { saveTokens } from './tokenManager';
+import { LOGIN, LOGOUT, LOGOUT_ALL } from './operations';
+import type { Session } from './session';
 
 interface EIP712TypedData {
   types: {
@@ -24,6 +17,15 @@ interface EIP712TypedData {
     message: string;
   };
 }
+
+interface LoginInput {
+  wallet: string;
+  signature: string;
+  timestamp: number;
+}
+
+const WELCOME_MESSAGE =
+  'Welcome to RWA Platform!\n\nWe prioritize the security of your assets and personal data. To ensure secure access to your account, we kindly request you to verify ownership of your wallet by signing this message.';
 
 export const authService = {
   createTypedData(wallet: string): EIP712TypedData {
@@ -45,38 +47,28 @@ export const authService = {
       message: {
         wallet,
         timestamp,
-        message:
-          'Welcome to RWA Platform!\n\nWe prioritize the security of your assets and personal data. To ensure secure access to your account, we kindly request you to verify ownership of your wallet by signing this message.',
+        message: WELCOME_MESSAGE,
       },
     };
   },
 
-  async authenticate(input: AuthenticateInput): Promise<AuthTokens> {
-    const { data, error } = await apolloClient.mutate<AuthenticateMutation>({
-      mutation: AUTHENTICATE,
+  async login(input: LoginInput): Promise<Session> {
+    const { data, error } = await apolloClient.mutate<{ login: Session }>({
+      mutation: LOGIN,
       variables: { input },
     });
 
     if (error) throw new Error(`Authentication error: ${error.message}`);
+    if (!data?.login) throw new Error('Authentication failed');
 
-    if (!data?.authenticate) {
-      throw new Error('Authentication failed: no tokens returned');
-    }
-
-    const tokens: AuthTokens = data.authenticate;
-    saveTokens(tokens);
-    return tokens;
+    return data.login;
   },
 
-  async revokeTokens(tokenHashes: RevokeTokensInput): Promise<number> {
-    const { data, error } = await apolloClient.mutate<RevokeTokensMutation>({
-      mutation: REVOKE_TOKENS,
-      variables: { tokenHashes },
-    });
+  async logout(): Promise<void> {
+    await apolloClient.mutate<{ logout: boolean }>({ mutation: LOGOUT });
+  },
 
-    if (error) throw new Error(`Token revocation error: ${error.message}`);
-    if (!data?.revokeTokens) throw new Error('Token revocation failed');
-
-    return data?.revokeTokens?.revokedCount || 0;
+  async logoutAll(): Promise<void> {
+    await apolloClient.mutate<{ logoutAll: boolean }>({ mutation: LOGOUT_ALL });
   },
 };

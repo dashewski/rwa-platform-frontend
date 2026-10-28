@@ -1,14 +1,11 @@
 import { GRAPHQL_ENDPOINT } from './config';
-import { clearSession, getAccessToken } from './auth/tokenManager';
+import { notifySessionExpired } from './auth/session';
 
 export async function gqlFetch(query: string, variables: Record<string, unknown>) {
-  const token = await getAccessToken();
   const response = await fetch(GRAPHQL_ENDPOINT, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables }),
   });
 
@@ -16,7 +13,7 @@ export async function gqlFetch(query: string, variables: Record<string, unknown>
 
   if (json.errors) {
     if (json.errors.some((e: { message?: string }) => e.message === 'Authentication required')) {
-      clearSession();
+      notifySessionExpired();
     }
     throw new Error(json.errors[0].message);
   }

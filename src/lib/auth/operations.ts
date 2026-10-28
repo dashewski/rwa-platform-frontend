@@ -1,36 +1,27 @@
 import { gql } from '@apollo/client';
 
-// Authentication mutation
-export const AUTHENTICATE = gql`
-  mutation Authenticate($input: AuthenticateInput!) {
-    authenticate(input: $input) {
+// Signs the user in; the gateway sets the session cookie in the response
+export const LOGIN = gql`
+  mutation Login($input: AuthSessionLoginInput!) {
+    login(input: $input) {
+      sessionId
       userId
       wallet
-      accessToken
-      refreshToken
-    }
-  }
-`;
-
-// Revoke tokens mutation
-export const REVOKE_TOKENS = gql`
-  mutation RevokeTokens($input: RevokeTokensInput!) {
-    revokeTokens(input: $input) {
-      revokedCount
-    }
-  }
-`;
-
-// Get user tokens query
-export const GET_USER_TOKENS = gql`
-  query GetUserTokens {
-    getUserTokens {
-      tokenId
-      userId
-      tokenHash
       expiresAt
-      createdAt
-      updatedAt
     }
+  }
+`;
+
+// Revokes the current session
+export const LOGOUT = gql`
+  mutation Logout {
+    logout
+  }
+`;
+
+// Revokes every session of the current user
+export const LOGOUT_ALL = gql`
+  mutation LogoutAll {
+    logoutAll
   }
 `;

@@ -4,7 +4,6 @@ import React, { FC, useEffect, useState, useRef } from 'react';
 import { createClient } from 'graphql-sse';
 import { gqlFetch } from '@/lib/gqlFetch';
 import { SSE_ENDPOINT } from '@/lib/config';
-import { getAccessToken } from '@/lib/auth/tokenManager';
 
 // ── GraphQL ──────────────────────────────────────────────────────────────────
 
@@ -140,14 +139,10 @@ const PoolTransactions: FC<PoolTransactionsProps> = ({ poolAddress }) => {
     let dispose: (() => void) | undefined;
 
     const connect = async () => {
-      const token = await getAccessToken();
       if (cancelled) return;
 
       const sseClient = createClient({
         url: SSE_ENDPOINT,
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
       });
 
       dispose = sseClient.subscribe(

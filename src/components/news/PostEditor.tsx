@@ -9,7 +9,7 @@ import clsx from 'clsx';
 import UploadMediaModal from './UploadMediaModal';
 import Image from 'next/image';
 import { API_ENDPOINT } from '@/lib/config';
-import { clearSession, getAccessToken } from '@/lib/auth/tokenManager';
+import { notifySessionExpired } from '@/lib/auth/session';
 
 type TextBlock = { type: 'text'; id: string; content: string };
 type ImageBlock = { type: 'image'; id: string; link: string };
@@ -19,8 +19,6 @@ let blockIdCounter = 0;
 const nextId = () => String(++blockIdCounter);
 
 const uploadImageMultipart = async (galleryId: string, file: File): Promise<{ id: string; url: string }> => {
-  const token = await getAccessToken();
-
   const formData = new FormData();
   formData.append('file', file);
   formData.append('galleryId', galleryId);
@@ -29,11 +27,11 @@ const uploadImageMultipart = async (galleryId: string, file: File): Promise<{ id
 
   const response = await fetch(`${API_ENDPOINT}/api/gallery/createImage`, {
     method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: 'include',
     body: formData,
   });
 
-  if (response.status === 401) clearSession();
+  if (response.status === 401) notifySessionExpired();
 
   if (!response.ok) {
     const text = await response.text();
