@@ -202,9 +202,6 @@ const Header: FC = () => {
                 <Link className={'py-2.5 text-base'} href={SUPPORT_URL} target={'_blank'} rel={'noopener noreferrer'}>
                   Contact support
                 </Link>
-                <Link className={'py-2.5 text-base'} href={'/dao'}>
-                  DAO
-                </Link>
                 <button
                   className={
                     'flex items-center gap-2 py-2.5 text-base text-red-bright mt-2 border-t-1 border-stroke-primary'
