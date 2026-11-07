@@ -1,15 +1,5 @@
 import { gql } from '@apollo/client';
 
-export const GET_UNLOCK_TIME = gql`
-  query GetUnlockTime {
-    getUnlockTime {
-      gasUnlockTime
-      holdUnlockTime
-      platformUnlockTime
-    }
-  }
-`;
-
 export const REQUEST_GAS = gql`
   mutation RequestGas($input: RequestTokenInput!) {
     requestGas(input: $input) {

@@ -2,6 +2,7 @@
 
 import React, { FC } from 'react';
 import { toast } from '@/components/ui';
+import { claimedAt } from '@/lib/faucet/cooldown';
 
 export interface FaucetHistoryItem {
   id: string;
@@ -81,7 +82,7 @@ const FaucetHistoryTable: FC<FaucetHistoryTableProps> = ({ items, isLoading }) =
               <div key={item.id} className={'-mt-px bg-bg-primary border border-stroke-primary h-[52px] flex items-center px-3 gap-2'}>
                 <span className={'text-sm text-black flex-1 truncate'}>{TOKEN_LABELS[item.tokenType] ?? item.tokenType}</span>
                 <span className={'text-sm text-black flex-1 text-right'}>{item.amount.toLocaleString()}</span>
-                <span className={'text-sm text-blue flex-1 text-right'}>{formatDateTime(item.createdAt)}</span>
+                <span className={'text-sm text-blue flex-1 text-right'}>{formatDateTime(claimedAt(item))}</span>
                 <span className={'flex-1 flex items-center justify-end gap-2 text-sm text-black'}>
                   <a
                     href={`${EXPLORER_TX_URL}${item.transactionHash}`}
@@ -114,7 +115,7 @@ const FaucetHistoryTable: FC<FaucetHistoryTableProps> = ({ items, isLoading }) =
                 <p className={'text-lg font-bold text-black'}>
                   {item.amount.toLocaleString()} {TOKEN_LABELS[item.tokenType] ?? item.tokenType}
                 </p>
-                <p className={'text-sm text-grey-dark'}>{formatDateTime(item.createdAt)}</p>
+                <p className={'text-sm text-grey-dark'}>{formatDateTime(claimedAt(item))}</p>
               </div>
 
               <div className={'border border-stroke-primary rounded-lg px-3 py-2.5'}>

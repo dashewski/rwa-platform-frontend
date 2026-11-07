@@ -1,11 +1,12 @@
 'use client';
 
-import React, { FC, useEffect, useState } from 'react';
+import React, { FC, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { DashboardLayout, Wrapper } from '@/components/layout';
 import { Button, Pagination, Title, toast } from '@/components/ui';
 import { useMutation, useQuery } from '@apollo/client/react';
-import { GET_HISTORY, GET_UNLOCK_TIME, REQUEST_GAS, REQUEST_HOLD, REQUEST_PLATFORM } from '@/lib/faucet/operations';
+import { GET_HISTORY, REQUEST_GAS, REQUEST_HOLD, REQUEST_PLATFORM } from '@/lib/faucet/operations';
+import { claimedAt, getUnlockTimes } from '@/lib/faucet/cooldown';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useKeepInViewport } from '@/lib/useKeepInViewport';
 import FaucetHistoryTable, { FaucetHistoryItem } from '@/components/faucet/FaucetHistoryTable';
@@ -64,13 +65,6 @@ const CooldownTooltip: FC<{ open: boolean; text: string }> = ({ open, text }) =>
 
 const FaucetPage: FC = () => {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
-  const {
-    data: unlockData,
-    loading: unlockLoading,
-    refetch,
-  } = useQuery(GET_UNLOCK_TIME, { fetchPolicy: 'network-only', skip: !isAuthenticated });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const unlockTime = (unlockData as any)?.getUnlockTime;
 
   // Claim history, newest first; paginated client-side since getHistory returns a plain list.
   const HISTORY_LIMIT = 100;
@@ -84,8 +78,15 @@ const FaucetPage: FC = () => {
     fetchPolicy: 'network-only',
     skip: !isAuthenticated,
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const history: FaucetHistoryItem[] = (historyData as any)?.getHistory ?? [];
+  // Sorted here by the real claim time too: the server's createdAt can't be trusted to order (or time) the records
+  const history: FaucetHistoryItem[] = useMemo(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    () => [...(((historyData as any)?.getHistory ?? []) as FaucetHistoryItem[])].sort((a, b) => claimedAt(b) - claimedAt(a)),
+    [historyData],
+  );
+  // The next-claim moments come from this same history: last claim of a token + 24h
+  const unlockTimes = getUnlockTimes(history);
+  const unlockKnown = !!historyData;
   const [historyPage, setHistoryPage] = useState(1);
   const historyTotalPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
   const pagedHistory = history.slice((historyPage - 1) * HISTORY_PAGE_SIZE, historyPage * HISTORY_PAGE_SIZE);
@@ -100,17 +101,17 @@ const FaucetPage: FC = () => {
   }, []);
 
   const now = Date.now() / 1000;
-  const notReady = authLoading || !isAuthenticated || unlockLoading;
+  const notReady = authLoading || !isAuthenticated || historyLoading;
   // "Claimed" (locked) is only shown once we actually know the unlock time, so the
   // buttons don't flash into the claimed state while auth/unlock data is still loading.
-  const holdClaimed = !notReady && unlockTime?.holdUnlockTime > now;
-  const gasClaimed = !notReady && unlockTime?.gasUnlockTime > now;
-  const platformClaimed = !notReady && unlockTime?.platformUnlockTime > now;
+  const holdClaimed = !notReady && unlockTimes.holdUnlockTime > now;
+  const gasClaimed = !notReady && unlockTimes.gasUnlockTime > now;
+  const platformClaimed = !notReady && unlockTimes.platformUnlockTime > now;
   // A visitor who isn't signed in yet (as opposed to still loading) sees the same
   // "inactive" look as a claimed button, but clicking it prompts them to sign in
   // instead of sending a claim — Sign In itself stays reachable via the page header.
   const notAuthenticated = !authLoading && !isAuthenticated;
-  const stillLoading = authLoading || unlockLoading;
+  const stillLoading = authLoading || historyLoading;
 
   const [tipOpen, setTipOpen] = useState<'hold' | 'gas' | 'platform' | null>(null);
   const openTip = (key: 'hold' | 'gas' | 'platform') => setTipOpen(key);
@@ -126,12 +127,12 @@ const FaucetPage: FC = () => {
       return;
     }
     if (holdClaimed) {
-      toast(`1 claim available in ${formatCooldown(unlockTime.holdUnlockTime)}`, 'warning');
+      toast(`1 claim available in ${formatCooldown(unlockTimes.holdUnlockTime)}`, 'warning');
       return;
     }
     try {
       await requestHold({ variables: { input: { amount: 500 } } });
-      await Promise.all([refetch(), refetchHistory()]);
+      await refetchHistory();
       toast('500 HOLD tokens sent to your wallet!');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to claim HOLD';
@@ -145,12 +146,12 @@ const FaucetPage: FC = () => {
       return;
     }
     if (gasClaimed) {
-      toast(`1 claim available in ${formatCooldown(unlockTime.gasUnlockTime)}`, 'warning');
+      toast(`1 claim available in ${formatCooldown(unlockTimes.gasUnlockTime)}`, 'warning');
       return;
     }
     try {
       await requestGas({ variables: { input: { amount: 0.01 } } });
-      await Promise.all([refetch(), refetchHistory()]);
+      await refetchHistory();
       toast('0.01 BNB sent to your wallet!');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to claim gas';
@@ -164,12 +165,12 @@ const FaucetPage: FC = () => {
       return;
     }
     if (platformClaimed) {
-      toast(`1 claim available in ${formatCooldown(unlockTime.platformUnlockTime)}`, 'warning');
+      toast(`1 claim available in ${formatCooldown(unlockTimes.platformUnlockTime)}`, 'warning');
       return;
     }
     try {
       await requestPlatform({ variables: { input: { amount: 10000 } } });
-      await Promise.all([refetch(), refetchHistory()]);
+      await refetchHistory();
       toast('10 000 PLT tokens sent to your wallet!');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to claim PLT';
@@ -194,7 +195,7 @@ const FaucetPage: FC = () => {
               </div>
               <div className={'text-2xl font-bold'}>500 HOLD</div>
               <div className={'text-sm text-label-tertiary'}>
-                {unlockTime ? formatUnlock(unlockTime.holdUnlockTime) : '—'}
+                {unlockKnown ? formatUnlock(unlockTimes.holdUnlockTime) : '—'}
               </div>
               <div
                 className={'relative mt-auto'}
@@ -203,7 +204,7 @@ const FaucetPage: FC = () => {
               >
                 <CooldownTooltip
                   open={holdClaimed && tipOpen === 'hold'}
-                  text={`1 claim available in ${unlockTime ? formatCooldown(unlockTime.holdUnlockTime) : ''}`}
+                  text={`1 claim available in ${unlockKnown ? formatCooldown(unlockTimes.holdUnlockTime) : ''}`}
                 />
                 <Button
                   className={clsx('w-full', (holdClaimed || notAuthenticated) && '!bg-grey-light !text-grey-dark')}
@@ -223,7 +224,7 @@ const FaucetPage: FC = () => {
               </div>
               <div className={'text-2xl font-bold'}>0.01 BNB</div>
               <div className={'text-sm text-label-tertiary'}>
-                {unlockTime ? formatUnlock(unlockTime.gasUnlockTime) : '—'}
+                {unlockKnown ? formatUnlock(unlockTimes.gasUnlockTime) : '—'}
               </div>
               <div
                 className={'relative mt-auto'}
@@ -232,7 +233,7 @@ const FaucetPage: FC = () => {
               >
                 <CooldownTooltip
                   open={gasClaimed && tipOpen === 'gas'}
-                  text={`1 claim available in ${unlockTime ? formatCooldown(unlockTime.gasUnlockTime) : ''}`}
+                  text={`1 claim available in ${unlockKnown ? formatCooldown(unlockTimes.gasUnlockTime) : ''}`}
                 />
                 <Button
                   className={clsx('w-full', (gasClaimed || notAuthenticated) && '!bg-grey-light !text-grey-dark')}
@@ -252,7 +253,7 @@ const FaucetPage: FC = () => {
               </div>
               <div className={'text-2xl font-bold'}>10 000 PLT</div>
               <div className={'text-sm text-label-tertiary'}>
-                {unlockTime ? formatUnlock(unlockTime.platformUnlockTime) : '—'}
+                {unlockKnown ? formatUnlock(unlockTimes.platformUnlockTime) : '—'}
               </div>
               <div
                 className={'relative mt-auto'}
@@ -261,7 +262,7 @@ const FaucetPage: FC = () => {
               >
                 <CooldownTooltip
                   open={platformClaimed && tipOpen === 'platform'}
-                  text={`1 claim available in ${unlockTime ? formatCooldown(unlockTime.platformUnlockTime) : ''}`}
+                  text={`1 claim available in ${unlockKnown ? formatCooldown(unlockTimes.platformUnlockTime) : ''}`}
                 />
                 <Button
                   className={clsx('w-full', (platformClaimed || notAuthenticated) && '!bg-grey-light !text-grey-dark')}
