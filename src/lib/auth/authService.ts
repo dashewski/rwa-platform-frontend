@@ -1,74 +1,81 @@
-import { apolloClient } from '../apollo/client';
-import { LOGIN, LOGOUT, LOGOUT_ALL } from './operations';
-import type { Session } from './session';
+import { API_ENDPOINT } from '../config';
+import { saveAccessToken } from './tokenManager';
 
-interface EIP712TypedData {
-  types: {
-    Message: Array<{ name: string; type: string }>;
-  };
-  primaryType: string;
+interface TypedData {
   domain: {
     name: string;
     version: string;
   };
+  types: {
+    Message: Array<{ name: string; type: string }>;
+  };
+  primaryType: string;
   message: {
+    domain: string;
     wallet: string;
-    timestamp: number;
+    nonce: string;
     message: string;
   };
 }
 
-interface LoginInput {
-  wallet: string;
-  signature: string;
-  timestamp: number;
+interface ChallengeResponse {
+  nonce: string;
+  expiresAt: number;
+  typedData: TypedData;
 }
 
-const WELCOME_MESSAGE =
-  'Welcome to RWA Platform!\n\nWe prioritize the security of your assets and personal data. To ensure secure access to your account, we kindly request you to verify ownership of your wallet by signing this message.';
+interface AuthenticateInput {
+  wallet: string;
+  nonce: string;
+  signature: string;
+}
+
+interface SessionResponse {
+  userId: string;
+  wallet: string;
+  accessToken: string;
+}
+
+async function post<T>(path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${API_ENDPOINT}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.error?.message ?? data?.message ?? `HTTP ${response.status}`);
+  }
+
+  return data as T;
+}
 
 export const authService = {
-  createTypedData(wallet: string): EIP712TypedData {
-    const timestamp = Math.floor(Date.now() / 1000);
-
-    return {
-      types: {
-        Message: [
-          { name: 'wallet', type: 'address' },
-          { name: 'timestamp', type: 'uint256' },
-          { name: 'message', type: 'string' },
-        ],
-      },
-      primaryType: 'Message',
-      domain: {
-        name: 'RWA Platform',
-        version: '1',
-      },
-      message: {
-        wallet,
-        timestamp,
-        message: WELCOME_MESSAGE,
-      },
-    };
+  challenge(wallet: string): Promise<ChallengeResponse> {
+    return post<ChallengeResponse>('/auth/challenge', { wallet });
   },
 
-  async login(input: LoginInput): Promise<Session> {
-    const { data, error } = await apolloClient.mutate<{ login: Session }>({
-      mutation: LOGIN,
-      variables: { input },
-    });
+  async authenticate(input: AuthenticateInput): Promise<SessionResponse> {
+    const data = await post<SessionResponse>('/auth/authenticate', input);
 
-    if (error) throw new Error(`Authentication error: ${error.message}`);
-    if (!data?.login) throw new Error('Authentication failed');
+    saveAccessToken(data.accessToken, { userId: data.userId, wallet: data.wallet });
 
-    return data.login;
+    return data;
   },
 
   async logout(): Promise<void> {
-    await apolloClient.mutate<{ logout: boolean }>({ mutation: LOGOUT });
+    await post<{ ok: boolean }>('/auth/logout');
   },
 
-  async logoutAll(): Promise<void> {
-    await apolloClient.mutate<{ logoutAll: boolean }>({ mutation: LOGOUT_ALL });
+  async logoutAll(): Promise<number> {
+    const data = await post<{ revokedCount: number }>('/auth/logoutAll');
+
+    return data.revokedCount;
   },
 };

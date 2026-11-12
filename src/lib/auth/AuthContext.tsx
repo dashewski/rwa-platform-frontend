@@ -1,11 +1,16 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
 import { useAccount, useDisconnect, useWalletClient } from 'wagmi';
 import { signTypedData } from 'viem/actions';
 import { useRouter } from 'next/navigation';
 import { authService } from './authService';
-import { getSession, SESSION_EXPIRED_EVENT, type Session } from './session';
+import {
+  AUTH_SESSION_EXPIRED_EVENT,
+  clearTokens,
+  currentUser,
+  getAccessToken,
+} from './tokenManager';
 import { toast } from '@/components/ui/Toast';
 
 interface AuthUser {
@@ -19,7 +24,6 @@ interface AuthContextType {
   user: AuthUser | null;
   login: () => Promise<void>;
   logout: () => Promise<void>;
-  logoutAll: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -28,7 +32,6 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   login: async () => {},
   logout: async () => {},
-  logoutAll: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -38,13 +41,12 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const { address } = useAccount();
   const { disconnect } = useDisconnect();
   const { data: walletClient } = useWalletClient();
   const router = useRouter();
-  const loginAttempted = useRef(false);
 
   const login = useCallback(async () => {
     if (!address) {
@@ -58,21 +60,26 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       setIsLoading(true);
 
-      const typedData = authService.createTypedData(address);
+      const { nonce, typedData } = await authService.challenge(address);
+
       const signature = await signTypedData(walletClient, {
         domain: typedData.domain as any,
-        types: typedData.types as any,
-        primaryType: typedData.primaryType,
-        message: typedData.message,
+        types: { Message: typedData.types.Message } as any,
+        primaryType: 'Message',
+        message: typedData.message as any,
       });
 
-      const next = await authService.login({
+      const session = await authService.authenticate({
         wallet: address,
+        nonce,
         signature,
-        timestamp: typedData.message.timestamp,
       });
 
-      setSession(next);
+      if (session.wallet.toLowerCase() !== address.toLowerCase()) {
+        throw new Error('Signed wallet does not match the connected wallet');
+      }
+
+      setUser({ userId: session.userId, wallet: session.wallet });
 
       toast('Signed in successfully!');
       router.push('/portfolio/');
@@ -84,28 +91,31 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [address, walletClient, router]);
 
+  const logout = useCallback(async () => {
+    try {
+      await authService.logout();
+    } catch {
+      // the refresh session may already be gone
+    }
+
+    clearTokens();
+    setUser(null);
+    disconnect();
+    toast('Signed out successfully.');
+    router.push('/');
+  }, [disconnect, router]);
+
   useEffect(() => {
     let cancelled = false;
 
     const restore = async () => {
       setIsLoading(true);
 
-      const current = await getSession();
+      const token = await getAccessToken();
+      const restored = currentUser();
 
-      if (cancelled) {
-        return;
-      }
-
-      setSession(current);
-
-      if (!current && address && walletClient && !loginAttempted.current) {
-        loginAttempted.current = true;
-
-        try {
-          await login();
-        } catch {
-          // the toast is already shown by login()
-        }
+      if (!cancelled && token && restored) {
+        setUser(restored);
       }
 
       if (!cancelled) {
@@ -118,53 +128,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return () => {
       cancelled = true;
     };
-  }, [address, walletClient, login]);
+  }, []);
 
   useEffect(() => {
-    const handleSessionExpired = () => {
-      setSession(null);
+    const handleExpired = () => {
+      setUser(null);
       toast('Session expired. Please sign in again.', 'error');
       router.push('/');
     };
 
-    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
-    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleExpired);
+
+    return () => {
+      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleExpired);
+    };
   }, [router]);
 
-  const logout = useCallback(async () => {
-    try {
-      await authService.logout();
-    } catch {
-      // the session is gone either way
-    }
-
-    setSession(null);
-    disconnect();
-    toast('Signed out successfully.');
-    router.push('/');
-  }, [disconnect, router]);
-
-  const logoutAll = useCallback(async () => {
-    try {
-      await authService.logoutAll();
-    } catch {
-      // the session is gone either way
-    }
-
-    setSession(null);
-    disconnect();
-    toast('Signed out on all devices.');
-    router.push('/');
-  }, [disconnect, router]);
-
-  const value = {
-    isAuthenticated: session !== null,
-    isLoading,
-    user: session ? { userId: session.userId, wallet: session.wallet } : null,
-    login,
-    logout,
-    logoutAll,
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider
+      value={{ isAuthenticated: user !== null, isLoading, user, login, logout }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
 }
